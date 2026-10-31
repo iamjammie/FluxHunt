@@ -8,6 +8,8 @@ A single-file, fully offline PCAP threat-hunting and incident-response workbench
 
 `Version 2.1` · Runtime: any modern browser · Dependencies: **none** · Network calls: **zero**
 
+**[▶ Launch the live demo](https://iamjammie.github.io/FluxHunt/)** · [Documentation](docs/) · [Download `FluxHunt.html`](https://github.com/iamjammie/FluxHunt/releases/latest)
+
 </div>
 
 ---
@@ -38,7 +40,9 @@ environments.
 
 ## Quick start
 
-1. Open `FluxHunt.html` in a browser (or use the hosted link).
+1. Open `FluxHunt.html` in a browser — download it from the
+   [latest release](https://github.com/iamjammie/FluxHunt/releases/latest), or try the
+   [live demo](https://iamjammie.github.io/FluxHunt/).
 2. It auto-loads a **synthetic demo capture** so you can explore immediately — a yellow banner marks
    it as demo data.
 3. Click **Open capture(s)…** or drag one or more `.pcap` / `.pcapng` files onto the window.
@@ -98,7 +102,11 @@ single-file app. See [ARCHITECTURE.md](docs/ARCHITECTURE.md#build).
 ```
 # analyzer.js  — the engine (parsing, detection, reporting, exports)
 # page.html    — the UI shell with an /*__ANALYZER__*/ placeholder
-# build        — inlines analyzer.js into page.html to produce FluxHunt.html
+# index.html   — the GitHub Pages landing page (hand-written, committed)
+
+node build.mjs   # inlines analyzer.js into page.html, producing:
+                 #   FluxHunt.html  — the portable single-file app (committed)
+                 #   app.html       — the hosted build with web fonts (gitignored)
 ```
 
 ## License
