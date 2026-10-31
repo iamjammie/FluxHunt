@@ -1,0 +1,1252 @@
+<title>FluxHunt</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: a sticky capture bar on top, a summary strip of capture figures, then one of six views
+   (Findings, Overview, Hosts, Sessions, Indicators, Packets) picked from a tab rail. Findings are
+   severity-striped cards; everything numeric is set in a monospace face with tabular digits. */
+:root {
+  --bg: #eef1f4; --surface: #ffffff; --surface-2: #e3e8ed; --surface-3: #d6dde4; --line: #cdd5dd; --fg: #161e26; --muted: #5a6977;
+  --accent: #0b6e66; --accent-fg: #ffffff; --accent-soft: #d5ebe8;
+  --high: #b42828; --high-soft: #f6dcdc; --medium: #a8650a; --medium-soft: #f5e6cb; --low: #2a5fa8; --low-soft: #d9e5f6; --info: #647382; --info-soft: #e3e8ed;
+  --font-ui: 'Manrope', 'Segoe UI', system-ui, sans-serif; --font-mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  --radius: 6px; --shadow: 0 1px 2px rgba(22,30,38,.08);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1418; --surface: #151c22; --surface-2: #1d262e; --surface-3: #27323c; --line: #2b3741; --fg: #e3e9ee; --muted: #8e9ca9;
+  --accent: #2fd0bf; --accent-fg: #06201d; --accent-soft: #123a37;
+  --high: #f07171; --high-soft: #3a1d1d; --medium: #e8a53f; --medium-soft: #3a2b12; --low: #6fa8ee; --low-soft: #182a42; --info: #8e9ca9; --info-soft: #243039;
+  --shadow: 0 1px 2px rgba(0,0,0,.4); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0e1418; --surface: #151c22; --surface-2: #1d262e; --surface-3: #27323c; --line: #2b3741; --fg: #e3e9ee; --muted: #8e9ca9;
+  --accent: #2fd0bf; --accent-fg: #06201d; --accent-soft: #123a37;
+  --high: #f07171; --high-soft: #3a1d1d; --medium: #e8a53f; --medium-soft: #3a2b12; --low: #6fa8ee; --low-soft: #182a42; --info: #8e9ca9; --info-soft: #243039;
+  --shadow: 0 1px 2px rgba(0,0,0,.4); color-scheme: dark; }
+
+/* colorblind-safe (Okabe-Ito) override, applied over either theme */
+:root[data-cb="1"] { --high: #d55e00; --medium: #e69f00; --low: #0072b2; --accent: #009e73; --accent-fg: #ffffff; --high-soft: #f6e0d2; --medium-soft: #f7ecd0; --low-soft: #d6e6f2; }
+:root[data-cb="1"][data-theme="dark"], :root[data-cb="1"]:not([data-theme="light"]) { --high-soft: #3a2415; --medium-soft: #3a2f12; --low-soft: #122a3a; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 14px; line-height: 1.45; margin: 0; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
+button, input, select { font: inherit; color: inherit; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+/* top bar */
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 9; background: var(--surface); border-bottom: 1px solid var(--line); }
+.top .gutter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding-block: 10px; max-width: 1200px; margin: 0 auto; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.logo { flex: 0 0 auto; }
+.brandtext { display: flex; flex-direction: column; min-width: 0; }
+.brand h1 { font-size: 17px; font-weight: 800; letter-spacing: -.01em; line-height: 1.1; }
+.brand span { color: var(--muted); font-size: 11.5px; }
+.iconbtn { padding: 6px 9px; font-size: 14px; line-height: 1; }
+/* active filter bar */
+.filterbanner { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: var(--radius); padding: 6px 12px; display: flex; align-items: center; gap: 10px; font-size: 12.5px; flex-wrap: wrap; }
+.filterbanner .mono { font-weight: 600; }
+.filterbanner button { margin-left: auto; }
+/* demo banner */
+.demobanner { background: var(--medium-soft); color: var(--medium); border: 1px solid var(--medium); border-radius: var(--radius); padding: 8px 12px; display: flex; align-items: center; gap: 10px; font-size: 13px; flex-wrap: wrap; }
+.demobanner b { color: var(--medium); }
+.demobanner button { margin-left: auto; }
+/* copyable values */
+.cv { cursor: copy; border-bottom: 1px dotted var(--line); }
+.cv:hover { background: var(--accent-soft); }
+/* sortable headers */
+th.sortable { cursor: pointer; user-select: none; } th.sortable:hover { color: var(--fg); }
+th.sortable::after { content: " ⇅"; opacity: .35; font-size: 10px; } th.sortable.asc::after { content: " ↑"; opacity: 1; } th.sortable.desc::after { content: " ↓"; opacity: 1; }
+/* command palette / search */
+.palette { position: fixed; inset: 0; background: rgba(10,16,20,.45); z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 10vh 16px 16px; }
+.palbox { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; width: 100%; max-width: 560px; box-shadow: 0 10px 40px rgba(0,0,0,.35); overflow: hidden; }
+.palbox input { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: var(--surface); padding: 13px 16px; font-size: 15px; outline: none; }
+.palresults { max-height: 50vh; overflow: auto; }
+.palresults .pr { display: flex; gap: 10px; align-items: center; padding: 9px 16px; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--line); }
+.palresults .pr:hover, .palresults .pr.sel { background: var(--surface-2); }
+.palresults .prk { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; flex: 0 0 68px; }
+.palresults .prv { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palresults .prd { color: var(--muted); margin-left: auto; font-size: 12px; white-space: nowrap; }
+.palempty { padding: 16px; color: var(--muted); font-size: 13px; }
+/* help / glossary */
+.kbd { font-family: var(--font-mono); font-size: 11px; background: var(--surface-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; }
+.helpgrid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13px; align-items: baseline; }
+.helpgrid dt { color: var(--muted); } .helpgrid dd { margin: 0; }
+/* density */
+:root[data-density="compact"] th, :root[data-density="compact"] td { padding: 2px 6px; }
+:root[data-density="compact"] .tile { padding: 7px 10px; } :root[data-density="compact"] .card { padding: 9px 12px; }
+:root[data-density="compact"] main { gap: 10px; } :root[data-density="compact"] .view { gap: 9px; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.btn { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--radius); padding: 7px 12px; font-weight: 600; cursor: pointer; font-size: 13px; }
+.btn:hover { background: var(--surface-3); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.small { padding: 4px 9px; font-size: 12px; }
+.btn:focus-visible, select:focus-visible, input:focus-visible, .tab:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+select { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--radius); padding: 6px 8px; font-size: 13px; }
+.status { font-size: 12px; color: var(--muted); min-width: 0; flex-basis: 100%; }
+.status.busy { color: var(--accent); }
+
+main { max-width: 1200px; margin: 0 auto; padding-block: 16px 40px; display: grid; gap: 16px; }
+main > *, #results > *, .strip > *, .view > *, .scroll, .panel > * { min-width: 0; }
+#results { display: grid; gap: 16px; }
+
+/* drop zone */
+.drop { border: 2px dashed var(--line); border-radius: 10px; padding: 24px 18px; text-align: center; color: var(--muted); background: var(--surface); }
+.drop.over { border-color: var(--accent); background: var(--accent-soft); color: var(--fg); }
+.drop strong { color: var(--fg); }
+
+/* summary strip */
+.strip { display: grid; gap: 12px; }
+.capinfo { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--muted); }
+.capinfo b { color: var(--fg); font-weight: 600; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; min-width: 0; }
+.tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.tile .v { font-size: 22px; font-weight: 700; margin-top: 2px; }
+.tile .s { font-size: 11.5px; color: var(--muted); }
+.tile.sev { display: flex; flex-direction: column; }
+.tile.sev .v { display: flex; gap: 10px; flex-wrap: wrap; font-size: 18px; }
+.pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 1px 9px 1px 6px; font-size: 12px; font-weight: 700; line-height: 1.6; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.high { color: var(--high); background: var(--high-soft); } .pill.medium { color: var(--medium); background: var(--medium-soft); }
+.pill.low { color: var(--low); background: var(--low-soft); } .pill.info { color: var(--info); background: var(--info-soft); }
+.warn { background: var(--medium-soft); color: var(--medium); border-radius: var(--radius); padding: 8px 12px; font-size: 13px; }
+
+/* tabs */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; font-weight: 600; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+.tab .n { font-family: var(--font-mono); font-size: 11.5px; background: var(--surface-2); border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+.view { display: grid; gap: 14px; min-width: 0; }
+.cardlist { display: grid; gap: 14px; min-width: 0; }
+
+/* findings */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 3px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; color: var(--muted); }
+.chip[aria-pressed="true"] { background: var(--surface-3); color: var(--fg); border-color: var(--surface-3); }
+.card { background: var(--surface); border: 1px solid var(--line); border-left-width: 4px; border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 8px; min-width: 0; box-shadow: var(--shadow); }
+.card.high { border-left-color: var(--high); } .card.medium { border-left-color: var(--medium); } .card.low { border-left-color: var(--low); } .card.info { border-left-color: var(--info); }
+.card .head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.card .cat { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 700; }
+.card h3 { font-size: 15px; font-weight: 700; flex-basis: 100%; overflow-wrap: anywhere; }
+.card p { margin: 0; overflow-wrap: anywhere; }
+.card .advice { color: var(--muted); font-size: 13px; }
+.card .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.evidence { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; background: var(--surface-2); border-radius: var(--radius); padding: 10px 12px; margin: 0; }
+.evidence dt { color: var(--muted); } .evidence dd { margin: 0; overflow-wrap: anywhere; }
+.none { color: var(--muted); padding: 20px; text-align: center; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.none b { color: var(--fg); }
+
+/* overview */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-width: 0; display: grid; gap: 8px; align-content: start; }
+.panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; }
+.panel.wide { grid-column: 1 / -1; }
+.head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+canvas { width: 100%; max-width: 100%; display: block; }
+.bars { display: grid; gap: 5px; }
+.bar { display: grid; grid-template-columns: 90px 1fr 70px; align-items: center; gap: 8px; font-size: 12.5px; }
+.bar .fill { height: 10px; border-radius: 3px; background: var(--accent); min-width: 2px; }
+.bar .track { background: var(--surface-2); border-radius: 3px; }
+.bar .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar .num { text-align: right; color: var(--muted); }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; position: sticky; top: 0; background: var(--surface); }
+td.num, th.num { text-align: right; }
+td.wrap { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
+.scroll { overflow-x: auto; max-width: 100%; }
+.link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font-family: var(--font-mono); font-size: inherit; text-decoration: underline dotted; }
+.zone { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; border-radius: 3px; padding: 1px 5px; background: var(--surface-2); color: var(--muted); font-weight: 700; }
+.zone.ext { background: var(--low-soft); color: var(--low); }
+.tag { display: inline-block; font-size: 10.5px; font-weight: 700; border-radius: 3px; padding: 1px 5px; background: var(--high-soft); color: var(--high); }
+.tag.q { background: var(--surface-2); color: var(--muted); }
+
+/* packets / sessions filter */
+.filterbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.filterbar input { flex: 1 1 240px; min-width: 0; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: 7px 10px; font-family: var(--font-mono); font-size: 13px; }
+.hint { font-size: 12px; color: var(--muted); flex-basis: 100%; }
+.hint code { font-family: var(--font-mono); background: var(--surface-2); padding: 0 4px; border-radius: 3px; }
+.pkts tbody tr, .clickrow tbody tr { cursor: pointer; }
+.pkts tbody tr:hover td, .clickrow tbody tr:hover td { background: var(--surface-2); }
+.pkts td.info { white-space: normal; min-width: 240px; overflow-wrap: anywhere; }
+.pkts tr.high td:first-child, .clickrow tr.high td:first-child { box-shadow: inset 3px 0 var(--high); } .pkts tr.medium td:first-child, .clickrow tr.medium td:first-child { box-shadow: inset 3px 0 var(--medium); } .pkts tr.low td:first-child, .clickrow tr.low td:first-child { box-shadow: inset 3px 0 var(--low); }
+.detail td { white-space: normal; background: var(--surface-2); }
+.detail pre { margin: 0; font-family: var(--font-mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.detail .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 2px 14px; font-size: 12.5px; margin-bottom: 8px; }
+.detail .kv span { color: var(--muted); }
+footer { color: var(--muted); font-size: 12px; max-width: 1200px; margin: 0 auto; padding-block: 0 24px; }
+footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; z-index: 20; }
+@media (prefers-reduced-motion: no-preference) { .toast { animation: pop .18s ease-out; } @keyframes pop { from { opacity: 0; transform: translate(-50%, 6px); } } }
+/* report */
+.report { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; display: grid; gap: 14px; box-shadow: var(--shadow); }
+.report h2 { font-size: 16px; font-weight: 800; letter-spacing: -.01em; padding-top: 6px; border-top: 1px solid var(--line); }
+.report h2:first-child { border-top: 0; padding-top: 0; }
+.report h3 { font-size: 13.5px; font-weight: 700; }
+.report p { margin: 0; overflow-wrap: anywhere; }
+.report ul, .report ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.report .assess { background: var(--surface-2); border-radius: var(--radius); padding: 10px 12px; border-left: 4px solid var(--accent); }
+.report .assess.active-compromise, .report .assess.high-risk { border-left-color: var(--high); }
+.report .assess.suspicious { border-left-color: var(--medium); }
+.report .kvlist { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; font-size: 13px; }
+.report .kvlist dt { color: var(--muted); } .report .kvlist dd { margin: 0; overflow-wrap: anywhere; }
+.report .narr { display: grid; gap: 6px; }
+.report .narr .step { display: grid; grid-template-columns: 64px 1fr; gap: 10px; align-items: baseline; font-size: 13px; }
+.report .narr .at { font-family: var(--font-mono); color: var(--muted); font-size: 12px; }
+.report .phase { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.report .fblock { border-top: 1px dashed var(--line); padding-top: 10px; display: grid; gap: 6px; }
+.report .fblock:first-of-type { border-top: 0; padding-top: 0; }
+.report .fhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.report .muted { color: var(--muted); }
+
+/* attack map / graph */
+.graphwrap { position: relative; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface-2); }
+#graph { width: 100%; display: block; cursor: grab; touch-action: none; }
+#graph:active { cursor: grabbing; }
+.gtip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 12px; padding: 6px 9px; border-radius: 6px; max-width: 240px; z-index: 5; line-height: 1.4; }
+.gtip b { font-family: var(--font-mono); }
+.glegend, .dlegend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); }
+.glegend span, .dlegend span { display: inline-flex; align-items: center; gap: 5px; }
+.glegend i, .dlegend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.killchain { display: grid; gap: 7px; }
+.kc-step { display: grid; grid-template-columns: 22px 1fr; gap: 9px; align-items: start; }
+.kc-dot { width: 14px; height: 14px; border-radius: 50%; margin-top: 2px; border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.kc-step .kc-body { font-size: 12.5px; min-width: 0; }
+.kc-step .kc-phase { font-weight: 700; }
+.kc-step .kc-detail { color: var(--muted); overflow-wrap: anywhere; }
+.kc-step:not(:last-child) .kc-dot { position: relative; }
+.kc-step:not(:last-child) .kc-dot::after { content: ""; position: absolute; left: 50%; top: 14px; transform: translateX(-50%); width: 2px; height: calc(100% + 7px); background: var(--line); }
+.kc-empty { color: var(--muted); font-size: 13px; }
+
+/* settings / modal */
+.modal { position: fixed; inset: 0; background: rgba(10,16,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: max(24px, env(safe-area-inset-top)) 16px 24px; z-index: 50; overflow-y: auto; }
+.sheet { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; width: 100%; max-width: 560px; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface); border-radius: 10px 10px 0 0; }
+.sheet-head h2 { font-size: 16px; font-weight: 800; }
+.sheet-body { padding: 6px 18px 18px; display: grid; gap: 18px; }
+.setgrp { display: grid; gap: 8px; }
+.setgrp h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; padding-top: 10px; border-top: 1px solid var(--line); }
+.setgrp:first-child h3 { border-top: 0; padding-top: 0; }
+.setrow { display: grid; grid-template-columns: 150px 1fr; gap: 10px; align-items: center; }
+.setrow label { font-size: 13px; color: var(--muted); }
+.setrow input, .setrow select { width: 100%; border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--radius); padding: 7px 9px; font-size: 13px; }
+.setgrp textarea { width: 100%; border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--radius); padding: 7px 9px; font-size: 12.5px; font-family: var(--font-mono); resize: vertical; }
+.toggles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; }
+.toggles label { display: flex; align-items: center; gap: 7px; font-size: 12.5px; cursor: pointer; }
+.streampre { font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 60vh; overflow: auto; background: var(--surface-2); border-radius: var(--radius); padding: 10px 12px; margin: 0; }
+.streampre .c2s { color: var(--low); } .streampre .s2c { color: var(--high); }
+.lockbox { max-width: 360px; padding: 24px; display: grid; gap: 12px; text-align: center; margin-top: 12vh; }
+.lockbox h2 { font-size: 20px; font-weight: 800; }
+.lockbox input { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--radius); padding: 9px 11px; font-size: 14px; }
+.tlp { display: inline-block; font-weight: 800; font-size: 11px; letter-spacing: .04em; padding: 2px 8px; border-radius: 4px; border: 1px solid; }
+.tlp-CLEAR { color: #333; border-color: #999; background: #fff; }
+.tlp-GREEN { color: #0a7d2c; border-color: #0a7d2c; background: #e6f6ec; }
+.tlp-AMBER { color: #9a5b00; border-color: #d08a1a; background: #fdf0d8; }
+.tlp-RED { color: #b42828; border-color: #b42828; background: #f8dede; }
+
+@media print {
+  .top, .tabs, footer, .modal, .filterbar, #drop { display: none !important; }
+  .view:not(#view-report) { display: none !important; }
+  #view-report { display: block !important; }
+  body { background: #fff; color: #000; font-size: 11pt; }
+  .report { border: 0; box-shadow: none; padding: 0; }
+  .report h2 { break-after: avoid; }
+  .fblock, .kc-step, tr { break-inside: avoid; }
+  a { color: #000; }
+}
+@media (max-width: 600px) { .top { position: static; } .brand span { display: none; } .bar { grid-template-columns: 70px 1fr 60px; } .tile .v { font-size: 19px; } .report .narr .step { grid-template-columns: 54px 1fr; } }
+</style>
+
+<header class="top"><div class="gutter">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="var(--accent)"/><path d="M4 20 L9 20 L12 11 L17 25 L20 16 L23 16" fill="none" stroke="var(--accent-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24.5" cy="9.5" r="4" fill="none" stroke="var(--accent-fg)" stroke-width="2"/><line x1="27.3" y1="12.3" x2="29.5" y2="14.5" stroke="var(--accent-fg)" stroke-width="2" stroke-linecap="round"/></svg>
+    <div class="brandtext"><h1>FluxHunt</h1><span>Hunting threats through traffic patterns</span></div>
+  </div>
+  <div class="controls">
+    <button class="btn" id="searchBtn" type="button" title="Search (press /)" aria-label="Search">🔍 Search</button>
+    <label for="sens" class="status" style="flex-basis:auto">Sensitivity</label>
+    <select id="sens"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select>
+    <button class="btn" id="demoBtn" type="button">Demo</button>
+    <button class="btn primary" id="openBtn" type="button">Open capture(s)…</button>
+    <button class="btn iconbtn" id="themeBtn" type="button" title="Theme" aria-label="Toggle theme">◐</button>
+    <button class="btn iconbtn" id="helpBtn" type="button" title="Help &amp; shortcuts (press ?)" aria-label="Help">?</button>
+    <button class="btn iconbtn" id="settingsBtn" type="button" title="Settings &amp; analyst details" aria-label="Settings">⚙</button>
+    <input type="file" id="file" accept=".pcap,.pcapng,.cap,application/vnd.tcpdump.pcap,application/octet-stream" multiple hidden>
+  </div>
+  <div class="status" id="status">Ready. Nothing leaves this page: the file is parsed locally.</div>
+</div></header>
+
+<main class="gutter">
+  <div class="drop" id="drop"><strong>Drop one or more .pcap / .pcapng files here</strong>, or use <em>Open capture(s)</em>. Several files are merged by timestamp and analysed together — useful for correlating multiple sensors or time windows into one incident. Captures from tcpdump, Wireshark, tshark and dumpcap all work.</div>
+
+  <section id="results" hidden>
+    <div class="strip">
+      <div id="demoBanner" class="demobanner" hidden><b>Demo data.</b> <span>This is a synthetic capture for exploring the tool — not real traffic. Drop your own <code>.pcap</code> / <code>.pcapng</code> to replace it.</span><button class="btn small" id="demoOpen" type="button">Open a capture</button></div>
+      <div class="capinfo" id="capinfo"></div>
+      <div class="tiles" id="tiles"></div>
+      <div id="warnings"></div>
+    </div>
+    <div id="filterBanner" class="filterbanner" hidden></div>
+    <nav class="tabs" role="tablist" id="tabs">
+      <button class="tab" role="tab" data-view="report" aria-selected="false" type="button">IR Report</button>
+      <button class="tab" role="tab" data-view="findings" aria-selected="true" type="button">Findings <span class="n" id="nFind">0</span></button>
+      <button class="tab" role="tab" data-view="graph" aria-selected="false" type="button">Attack Map</button>
+      <button class="tab" role="tab" data-view="overview" aria-selected="false" type="button">Overview</button>
+      <button class="tab" role="tab" data-view="hosts" aria-selected="false" type="button">Hosts <span class="n" id="nHosts">0</span></button>
+      <button class="tab" role="tab" data-view="sessions" aria-selected="false" type="button">Sessions <span class="n" id="nSess">0</span></button>
+      <button class="tab" role="tab" data-view="iocs" aria-selected="false" type="button">Indicators <span class="n" id="nIocs">0</span></button>
+      <button class="tab" role="tab" data-view="packets" aria-selected="false" type="button">Packets <span class="n" id="nPkts">0</span></button>
+    </nav>
+
+    <div class="view" id="view-report" hidden>
+      <div class="filterbar">
+        <button class="btn small" id="repPrint" type="button">Print / Save as PDF</button>
+        <button class="btn small" id="repMd" type="button">Copy as Markdown</button>
+        <button class="btn small" id="repHtml" type="button">Copy as HTML</button>
+        <button class="btn small" id="repDl" type="button">Download HTML</button>
+        <button class="btn small" id="casePkg" type="button">Case package (ZIP)</button>
+        <span class="hint" style="flex-basis:auto">A shareable incident-response write-up: executive summary, probable attack narrative, timeline, affected assets, technical detail and IOC appendix. Set analyst &amp; case details in ⚙ Settings. Print/PDF and Download work in the downloaded standalone file; Copy works everywhere.</span>
+      </div>
+      <div id="reportBody" class="report"></div>
+    </div>
+
+    <div class="view" id="view-findings" hidden>
+      <div class="chips" id="sevChips"></div>
+      <div id="findingList"></div>
+    </div>
+
+    <div class="view" id="view-overview" hidden>
+      <div class="grid2">
+        <div class="panel wide"><h2>Packets over time</h2><canvas id="timeline" height="160"></canvas><div class="hint" id="timelineHint"></div></div>
+        <div class="panel wide"><h2>Throughput (bytes/s)</h2><canvas id="iograph" height="150"></canvas></div>
+        <div class="panel wide"><h2>Expert info · TCP health</h2><div id="tcpHealthSummary" class="capinfo" style="margin-bottom:6px"></div><div class="scroll"><table id="tcpHealthTable"></table></div></div>
+        <div class="panel wide"><h2>Protocol hierarchy</h2><div class="scroll"><table id="protoTree"></table></div></div>
+        <div class="panel"><h2>Protocols</h2><div class="bars" id="protoBars"></div></div>
+        <div class="panel"><h2>Destination ports</h2><div class="bars" id="portBars"></div></div>
+        <div class="panel"><h2>Top talkers</h2><div class="scroll"><table id="talkers"></table></div></div>
+        <div class="panel"><h2>Top conversations</h2><div class="scroll"><table id="convs"></table></div></div>
+        <div class="panel"><h2>DNS domains queried</h2><div class="bars" id="dnsBars"></div></div>
+        <div class="panel"><h2>TLS server names (SNI)</h2><div class="bars" id="sniBars"></div></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-graph" hidden>
+      <div class="grid2">
+        <div class="panel wide">
+          <div class="head-row"><h2>Network &amp; attack map</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn small" id="graphPng" type="button">Save PNG</button><div class="glegend" id="glegend"></div></div></div>
+          <div class="graphwrap"><canvas id="graph" height="460"></canvas><div class="gtip" id="gtip" hidden></div></div>
+          <div class="hint">Hosts sized by traffic volume; edges are observed conversations. Red = external C2 / exfil / malware source, orange = internal host in a finding, amber = other flagged external. Drag to rearrange, click a host to see its packets, scroll to zoom.</div>
+        </div>
+        <div class="panel"><h2>Attack chain</h2><div id="killchain" class="killchain"></div></div>
+        <div class="panel"><h2>Findings by category</h2><canvas id="donut" height="220"></canvas><div id="donutLegend" class="dlegend"></div></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-hosts" hidden>
+      <div class="scroll"><table id="hostTable"></table></div>
+    </div>
+
+    <div class="view" id="view-sessions" hidden>
+      <div class="filterbar">
+        <input id="sessFilter" placeholder="Filter sessions… e.g. host:10.0.0.45 external port:443 name:cdn" autocomplete="off" spellcheck="false">
+        <select id="sessSort"><option value="start">Sort: start time</option><option value="cBytes">Sort: bytes sent</option><option value="sBytes">Sort: bytes received</option><option value="dur">Sort: duration</option></select>
+        <button class="btn small" id="sessCsv" type="button">Export CSV</button>
+        <div class="hint">One row per TCP connection or UDP exchange, client → server. <code>host:</code> either end, <code>src:</code> <code>dst:</code> <code>port:</code> <code>proto:tcp|udp</code> <code>name:</code> (server name contains), <code>external</code> / <code>internal</code> destination, <code>partial</code> (began before the capture). Click a row for its packets.</div>
+      </div>
+      <div class="scroll"><table class="clickrow" id="sessTable"></table></div>
+      <div id="sessMore"></div>
+    </div>
+
+    <div class="view" id="view-iocs" hidden>
+      <div class="filterbar">
+        <div class="chips" id="iocChips"></div>
+        <span style="flex-basis:100%"></span>
+        <select id="iocExport"><option value="csv">CSV (indicators)</option><option value="defang">Defanged list</option><option value="stix">STIX 2.1 bundle</option><option value="misp">MISP event</option><option value="suricata">Suricata/Snort rules</option><option value="yara">YARA rule</option><option value="sigma">Sigma rule</option><option value="openioc">OpenIOC</option><option value="cef">CEF (SIEM)</option><option value="zeek">Zeek logs (conn/ssl/files)</option><option value="navigator">ATT&amp;CK Navigator layer</option></select>
+        <button class="btn small" id="iocExportBtn" type="button">Copy export</button>
+        <div class="hint">Extracted artifacts and indicators — external endpoints, domains, carved files and their SHA-256, TLS certificates, captured credentials, JA3/JA4 fingerprints and an asset inventory. Export feeds a threat-intel platform, a block list or your IDS. Click a row with an address to see its packets.</div>
+      </div>
+      <div class="scroll"><table class="clickrow" id="iocTable"></table></div>
+    </div>
+
+    <div class="view" id="view-packets" hidden>
+      <div class="filterbar">
+        <input id="filter" placeholder="Filter packets… e.g. ip:10.0.0.5 port:443" autocomplete="off" spellcheck="false">
+        <button class="btn small" id="clearFilter" type="button">Clear</button>
+        <button class="btn small" id="pcapOut" type="button">Save as .pcap</button>
+        <button class="btn small" id="pcapAnon" type="button">Save anonymized .pcap</button>
+        <button class="btn small" id="pktCsv" type="button">Copy CSV</button>
+        <div class="hint">Space-separated terms, all must match. <code>ip:</code> <code>src:</code> <code>dst:</code> <code>port:</code> <code>proto:</code> <code>n:1,2,3</code> (packet numbers), <code>!term</code> to exclude, or plain text to search the info column.</div>
+      </div>
+      <div class="scroll"><table class="pkts" id="pktTable"></table></div>
+      <div id="pktMore"></div>
+    </div>
+  </section>
+</main>
+
+<div class="modal" id="settingsModal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+    <div class="sheet-head"><h2 id="setTitle">Settings &amp; admin</h2><button class="btn small" id="setClose" type="button">Close</button></div>
+    <div class="sheet-body">
+      <section class="setgrp"><h3>Analyst &amp; case details</h3><p class="hint" style="flex-basis:auto">Recorded in the header of every generated report. Stored only in this browser.</p>
+        <div class="setrow"><label for="anName">Analyst</label><input id="anName" placeholder="e.g. A. Rahman"></div>
+        <div class="setrow"><label for="anOrg">Organisation</label><input id="anOrg" placeholder="e.g. Acme CSIRT"></div>
+        <div class="setrow"><label for="anCase">Case / incident ID</label><input id="anCase" placeholder="e.g. IR-2026-0412"></div>
+        <div class="setrow"><label for="anTlp">Classification</label><select id="anTlp"><option value="">None</option><option>TLP:CLEAR</option><option>TLP:GREEN</option><option selected>TLP:AMBER</option><option>TLP:AMBER+STRICT</option><option>TLP:RED</option></select></div>
+      </section>
+      <section class="setgrp"><h3>Threat intelligence</h3>
+        <label class="hint" style="flex-basis:auto" for="iocWatch">IOC watchlist — IPs, domains or SHA-256 hashes (any separator). Matches are flagged as high-severity confirmed hits. Defanged indicators (hxxp, 1[.]2[.]3[.]4) are accepted.</label>
+        <textarea id="iocWatch" rows="3" placeholder="198.51.100.7&#10;evil.example.com&#10;&lt;sha256&gt;"></textarea>
+        <label class="hint" style="flex-basis:auto" for="allowList">Allowlist — IPs, domains or JA3 hashes to treat as known-good. Findings involving them are suppressed.</label>
+        <textarea id="allowList" rows="2" placeholder="10.0.0.1&#10;trusted-cdn.example.com"></textarea>
+      </section>
+      <section class="setgrp"><h3>Detection</h3>
+        <div class="setrow"><label for="setSens">Default sensitivity</label><select id="setSens"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select></div>
+        <div class="setrow"><label for="cbPalette">Colourblind palette</label><input type="checkbox" id="cbPalette" style="width:auto;justify-self:start"></div>
+        <label class="hint" style="flex-basis:auto" for="decodeAs">Decode-as — force a port to a protocol, one <code>port=proto</code> per line (proto: http, tls, dns). Example: <code>8443=tls</code></label>
+        <textarea id="decodeAs" rows="2" placeholder="8443=tls&#10;5353=dns"></textarea>
+        <p class="hint" style="flex-basis:auto">Enable or disable detector categories. Changes re-filter the current capture immediately.</p>
+        <div id="catToggles" class="toggles"></div>
+      </section>
+      <section class="setgrp"><h3>Display</h3>
+        <div class="setrow"><label for="setTheme">Theme</label><select id="setTheme"><option value="system">Match system</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+        <div class="setrow"><label for="setDensity">Density</label><select id="setDensity"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></div>
+      </section>
+      <section class="setgrp"><h3>Workspace lock</h3>
+        <p class="hint" style="flex-basis:auto">An optional passphrase that hides the workspace behind a prompt on this device. This is a privacy screen, <strong>not real authentication</strong>: the capture is processed entirely in your browser and a determined local user can bypass it. True multi-user sign-in and role-based admin need the server deployment (see the report footer note).</p>
+        <div class="setrow"><label for="lockPass">Passphrase</label><input id="lockPass" type="password" placeholder="leave blank to disable" autocomplete="new-password"></div>
+        <div class="setrow"><label></label><button class="btn small" id="lockSave" type="button">Set / clear lock</button></div>
+      </section>
+    </div>
+  </div>
+</div>
+<div class="palette" id="palette" hidden>
+  <div class="palbox" role="dialog" aria-modal="true" aria-label="Search">
+    <input id="palInput" type="text" placeholder="Search hosts, domains, findings, files, fingerprints…" autocomplete="off" spellcheck="false">
+    <div class="palresults" id="palResults"></div>
+  </div>
+</div>
+<div class="modal" id="helpModal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="helpTitle" style="max-width:640px">
+    <div class="sheet-head"><h2 id="helpTitle">FluxHunt — help &amp; shortcuts</h2><button class="btn small" id="helpClose" type="button">Close</button></div>
+    <div class="sheet-body">
+      <section class="setgrp"><h3>Keyboard shortcuts</h3>
+        <dl class="helpgrid"><dt><span class="kbd">/</span></dt><dd>Open search</dd><dt><span class="kbd">?</span></dt><dd>This help</dd><dt><span class="kbd">g</span> then <span class="kbd">f/o/a/r/h/s/i/p</span></dt><dd>Jump to Findings / Overview / Attack map / Report / Hosts / Sessions / Indicators / Packets</dd><dt><span class="kbd">Esc</span></dt><dd>Close any dialog</dd><dt><span class="kbd">↑</span>/<span class="kbd">↓</span>, <span class="kbd">Enter</span></dt><dd>Navigate and open search results</dd></dl>
+      </section>
+      <section class="setgrp"><h3>The views</h3>
+        <dl class="helpgrid">
+          <dt>IR Report</dt><dd>Executive summary, attack narrative, timeline, affected assets, ATT&amp;CK coverage, technical findings, IOCs and chain of custody. Export to PDF / HTML / Markdown.</dd>
+          <dt>Findings</dt><dd>Every detection, filterable by severity and category. Each links to its packets, hosts and ATT&amp;CK technique.</dd>
+          <dt>Attack Map</dt><dd>Force-directed host graph (red = C2, orange = host in a finding), the reconstructed kill-chain, and a findings donut.</dd>
+          <dt>Overview</dt><dd>Timeline, throughput, protocol hierarchy, expert-info / TCP health, top talkers and conversations.</dd>
+          <dt>Hosts</dt><dd>Every host; click one for a consolidated host view (findings, sessions, enrichment).</dd>
+          <dt>Sessions</dt><dd>One row per connection with bytes, RTT, retransmissions and a <b>Follow Stream</b> button.</dd>
+          <dt>Indicators</dt><dd>External IPs, domains, carved files, certificates, credentials, JA3/JA4/JA3S and assets — exportable as STIX, MISP, CSV, Zeek, Suricata, YARA, Sigma, OpenIOC, CEF or ATT&amp;CK Navigator.</dd>
+          <dt>Packets</dt><dd>Filterable packet list with full decode, hex, and <code>.pcap</code> / anonymised-<code>.pcap</code> / CSV export.</dd>
+        </dl>
+      </section>
+      <section class="setgrp"><h3>Reading findings honestly</h3>
+        <p class="hint" style="flex-basis:auto">Findings are heuristics demonstrated on synthetic traffic. Legitimate software (telemetry, updates, CDNs, backups) can resemble beaconing, exfiltration or fast-flux. Validate against known-good baselines and correlate with host logs before acting. IP region is the responsible RIR (not geolocation); ATT&amp;CK IDs are a best-effort mapping, not attribution.</p>
+      </section>
+      <section class="setgrp"><h3>About</h3><p class="hint" style="flex-basis:auto" id="aboutLine"></p></section>
+    </div>
+  </div>
+</div>
+<div class="modal" id="hostModal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="hostTitle" style="max-width:720px">
+    <div class="sheet-head"><h2 id="hostTitle">Host</h2><button class="btn small" id="hostClose" type="button">Close</button></div>
+    <div class="sheet-body" id="hostBody"></div>
+  </div>
+</div>
+<div class="modal" id="streamModal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" style="max-width:820px">
+    <div class="sheet-head"><h2 id="streamTitle">Follow stream</h2><div style="display:flex;gap:8px"><button class="btn small" id="streamHex" type="button">Hex</button><button class="btn small" id="streamClose" type="button">Close</button></div></div>
+    <div class="sheet-body"><div id="streamMeta" class="hint" style="flex-basis:auto"></div><pre id="streamBody" class="streampre"></pre></div>
+  </div>
+</div>
+<div class="modal lock" id="lockModal" hidden>
+  <div class="sheet lockbox" role="dialog" aria-modal="true">
+    <h2>FluxHunt</h2><p class="hint" style="flex-basis:auto">This workspace is locked. Enter the passphrase to continue.</p>
+    <input id="lockInput" type="password" placeholder="Passphrase" autocomplete="current-password">
+    <div id="lockErr" class="warn" hidden>Incorrect passphrase.</div>
+    <button class="btn primary" id="lockUnlock" type="button">Unlock</button>
+  </div>
+</div>
+
+<footer><div class="gutter">
+  <span>Detectors: port/host/ping sweeps, SYN floods, stealth-flag probes, ARP spoofing, DNS tunnelling, DGA, fast-flux, DNS rebinding, DoH, homoglyph domains, ICMP tunnels, fixed/jittered/rotating beaconing, known-bad JA3, reverse-shell listeners, HTTP CONNECT tunnels, brute force, Kerberoasting, NTLM/cleartext credential capture, SMB/DCE-RPC lateral movement, exfiltration, malware file downloads (carved + SHA-256), suspicious TLS certificates, protocol-on-odd-port, fragmentation, TTL anomalies, traffic bursts. Artifacts: files, certificates, credentials, JA3/JA4, asset inventory. Each finding is mapped to MITRE ATT&CK, and external IPs get offline RIR-region + known-network enrichment. Exports: STIX, MISP, CSV, defanged, Suricata, YARA.</span>
+  <button class="btn small" id="copyJson" type="button">Copy report as JSON</button>
+  <button class="btn small" id="copyText" type="button">Copy findings as text</button>
+</div></footer>
+
+<script>
+/*__ANALYZER__*/
+</script>
+<script>
+(function () {
+  'use strict';
+  const A = FluxHunt;
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const fmtN = n => n.toLocaleString();
+  const fmtDur = s => s < 1 ? (s * 1000).toFixed(0) + ' ms' : s < 120 ? s.toFixed(1) + ' s' : s < 7200 ? (s / 60).toFixed(1) + ' min' : (s / 3600).toFixed(2) + ' h';
+  const fmtTs = t => { const d = new Date(t * 1000); return isNaN(d) ? '—' : d.toISOString().replace('T', ' ').replace('Z', ' UTC'); };
+  const relTs = t => { const r = state.result; return isFinite(t) && r ? '+' + (t - r.summary.start).toFixed(2) + ' s' : '—'; };
+  const fmtOffsetUI = s => { s = Math.max(0, s); return s < 120 ? '+' + s.toFixed(1) + 's' : s < 7200 ? '+' + (s / 60).toFixed(1) + 'm' : '+' + (s / 3600).toFixed(2) + 'h'; };
+
+  let state = { name: null, capture: null, pkts: [], result: null, sevFilter: 'all', catFilter: '', filter: '', shown: 0, filtered: [], sevOf: new Map(), sessFilter: '', sessSort: 'start', sessShown: 0, sessRows: [], iocTab: 'ips' };
+
+  // ---------------- settings / analyst / admin (persisted locally; honestly not a security boundary)
+  const ALL_CATS = ['Reconnaissance', 'Denial of service', 'Spoofing', 'Covert channel', 'Command and control', 'Malware delivery', 'Lateral movement', 'Credential access', 'Credential attack', 'Cleartext credentials', 'Suspicious TLS', 'Suspicious connection', 'Data exfiltration', 'Infrastructure', 'Evasion', 'Traffic anomaly', 'Integrity'];
+  const textareaCss = 'width:100%;border:1px solid var(--line);background:var(--surface-2);border-radius:var(--radius);padding:7px 9px;font-size:12.5px;font-family:var(--font-mono);resize:vertical';
+  let settings = { analyst: { name: '', org: '', case: '', tlp: 'TLP:AMBER' }, sensitivity: 'normal', disabled: [], lock: null, allowText: '', iocText: '', cbPalette: false, decodeAsText: '', theme: 'system', density: 'comfortable', lastView: null, demoDismissed: false };
+  function applyTheme() { const t = settings.theme; if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme'); if (settings.density === 'compact') document.documentElement.setAttribute('data-density', 'compact'); else document.documentElement.removeAttribute('data-density'); }
+  function parseDecodeAs(text) { const m = {}; for (const line of (text || '').split(/[\n,;]+/)) { const mm = /^\s*(\d{1,5})\s*=\s*(http|tls|dns)\s*$/i.exec(line); if (mm) m[+mm[1]] = mm[2].toLowerCase(); } return m; }
+  function parseIndicators(text) {
+    const out = { ips: [], domains: [], hashes: [], ja3: [] };
+    for (let line of (text || '').split(/[\s,;]+/)) { line = line.trim().replace(/^hxxp/i, 'http').replace(/\[\.\]/g, '.').replace(/\[:\]/g, ':'); if (!line) continue; if (/^\d{1,3}(\.\d{1,3}){3}$/.test(line)) out.ips.push(line); else if (/^[a-f0-9]{64}$/i.test(line)) out.hashes.push(line); else if (/^[a-f0-9]{32}$/i.test(line)) out.ja3.push(line); else if (/\./.test(line) && !/\//.test(line)) out.domains.push(line.toLowerCase().replace(/^www\./, '').replace(/\/$/, '')); }
+    return out;
+  }
+  function analyzeOpts() { return { sensitivity: $('sens').value, disabled: settings.disabled, allow: parseIndicators(settings.allowText), ioc: parseIndicators(settings.iocText) }; }
+  function loadSettings() { try { const s = JSON.parse(localStorage.getItem('ps_settings') || '{}'); settings = Object.assign(settings, s); settings.analyst = Object.assign({ name: '', org: '', case: '', tlp: 'TLP:AMBER' }, s.analyst || {}); } catch (e) { } }
+  function saveSettings() { try { localStorage.setItem('ps_settings', JSON.stringify(settings)); } catch (e) { } }
+  function reportMeta() { return { title: 'Network Traffic Incident Analysis', name: state.name, sources: (state.sources || []).map(s => ({ name: s.name, packets: s.packets, bytes: s.bytes, sha256: s.sha256 })), analyst: settings.analyst, toolVersion: A.VERSION, config: { sensitivity: $('sens') ? $('sens').value : settings.sensitivity, disabledDetectors: (settings.disabled || []).length, watchlist: parseIndicators(settings.iocText), allowlist: parseIndicators(settings.allowText) } }; }
+  async function hashPass(p) { try { const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('ps:' + p)); return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join(''); } catch (e) { return 'x' + p.length; } }
+  async function sha256Buf(buf) { try { const d = await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join(''); } catch (e) { return null; } }
+  function downloadBytes(bytes, name, mime) { try { const blob = new Blob([bytes], { type: mime || 'application/octet-stream' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 100); toast(name + ' downloaded'); } catch (e) { toast('Download is blocked in this view — open the downloaded standalone file to export'); } }
+
+  const status = (msg, busy) => { const el = $('status'); el.textContent = msg; el.classList.toggle('busy', !!busy); };
+  const sleep = () => new Promise(r => setTimeout(r, 0));
+  function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 1800); }
+
+  // ---------------- loading (one or many files, merged by timestamp)
+  const readBuf = file => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error('could not be read')); r.readAsArrayBuffer(file); });
+  async function analyzeInputs(inputs) {
+    try {
+      A.setDecodeAs(parseDecodeAs(settings.decodeAsText));
+      const multi = inputs.length > 1;
+      const parts = []; const warnings = []; const sources = [];
+      for (const inp of inputs) {
+        status('Reading ' + inp.name + '…', true); await sleep();
+        const cap = A.parseCapture(inp.buf);
+        const nn = cap.packets.length; const dec = new Array(nn); let bytes = 0;
+        for (let i = 0; i < nn; i++) { dec[i] = A.decodePacket(cap.packets[i], i); bytes += cap.packets[i].len; if ((i & 16383) === 16383) { status('Decoding ' + inp.name + '… ' + fmtN(i + 1) + ' / ' + fmtN(nn), true); await sleep(); } }
+        for (let i = 0; i < nn; i++) parts.push({ raw: cap.packets[i], dp: dec[i], file: inp.name });
+        for (const w of (cap.warnings || [])) warnings.push(inp.name + ': ' + w);
+        const sha256 = inp.buf ? await sha256Buf(inp.buf) : null;
+        sources.push({ name: inp.name, packets: nn, bytes, format: cap.format, start: nn ? dec[0].ts : 0, end: nn ? dec[nn - 1].ts : 0, sha256 });
+      }
+      if (!parts.length) { status('No packets were found in the selected file(s).'); return; }
+      if (multi) { status('Merging ' + fmtN(parts.length) + ' packets from ' + inputs.length + ' files…', true); await sleep(); parts.sort((a, b) => a.dp.ts - b.dp.ts); }
+      const rawPackets = new Array(parts.length), pkts = new Array(parts.length);
+      for (let i = 0; i < parts.length; i++) { parts[i].dp.n = i + 1; parts[i].dp.file = parts[i].file; rawPackets[i] = parts[i].raw; pkts[i] = parts[i].dp; }
+      const cap = { format: multi ? inputs.length + ' files merged' : sources[0].format, linktype: rawPackets.length ? rawPackets[0].linktype : 1, packets: rawPackets, warnings };
+      let name;
+      if (multi) { const all = sources.map(s => s.name).join(', '); name = inputs.length + ' captures (' + (all.length > 54 ? all.slice(0, 54) + '…' : all) + ')'; }
+      else name = sources[0].name;
+      status('Looking for anomalies…', true); await sleep();
+      const result = A.analyze(pkts, cap, analyzeOpts());
+      state = Object.assign(state, { name, capture: cap, pkts, result, sources, sevFilter: 'all', filter: '', shown: 0, sessFilter: '', sessShown: 0, iocTab: 'ips' });
+      state.sevOf = new Map();
+      const order = { high: 0, medium: 1, low: 2, info: 3 };
+      for (const f of result.findings) for (const pn of f.packets) { const cur = state.sevOf.get(pn); if (!cur || order[f.severity] < order[cur]) state.sevOf.set(pn, f.severity); }
+      render();
+      const s = result.severity;
+      status(name + ': ' + fmtN(pkts.length) + ' packets analysed' + (multi ? ' (' + inputs.length + ' files merged)' : '') + ', ' + result.findings.length + ' finding' + (result.findings.length === 1 ? '' : 's') + (s.high ? ' (' + s.high + ' high)' : '') + '.');
+    } catch (e) {
+      status('Could not analyse: ' + (e && e.message ? e.message : e));
+      console.error(e);
+    }
+  }
+  async function loadFiles(fileList) {
+    const files = [...fileList].filter(Boolean);
+    if (!files.length) return;
+    const over = files.find(f => f.size > 400 * 1024 * 1024);
+    if (over) { status('“' + over.name + '” is ' + A.fmtBytes(over.size) + '. Split files over 400 MB with editcap first.'); return; }
+    const total = files.reduce((a, f) => a + f.size, 0);
+    if (total > 800 * 1024 * 1024) { status('Those files total ' + A.fmtBytes(total) + ', likely to exhaust browser memory. Analyse fewer at once, or merge a smaller selection.'); return; }
+    try {
+      const inputs = [];
+      for (const f of files) { status('Reading ' + f.name + '…', true); await sleep(); inputs.push({ buf: await readBuf(f), name: f.name }); }
+      await analyzeInputs(inputs);
+    } catch (e) { status('A file could not be read: ' + (e && e.message ? e.message : e)); }
+  }
+  function loadDemo() { const u = A.buildDemoPcap(); analyzeInputs([{ buf: u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength), name: 'demo-capture.pcap (synthetic)' }]); }
+
+  $('openBtn').addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', e => { loadFiles(e.target.files); e.target.value = ''; });
+  $('demoBtn').addEventListener('click', loadDemo);
+  function reanalyze(msg) { if (!state.capture) return; status(msg || 'Re-running detectors…', true); setTimeout(() => { state.result = A.analyze(state.pkts, state.capture, analyzeOpts()); state.sevFilter = 'all'; render._keep = true; render(); status(state.name + ': ' + state.result.findings.length + ' findings at ' + $('sens').value + ' sensitivity.'); }, 0); }
+  $('sens').addEventListener('change', () => { settings.sensitivity = $('sens').value; saveSettings(); reanalyze(); });
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) drop.classList.remove('over'); }));
+  document.addEventListener('drop', e => { const fs = e.dataTransfer && e.dataTransfer.files; if (fs && fs.length) loadFiles(fs); });
+
+  // ---------------- tabs
+  $('tabs').addEventListener('click', e => { const b = e.target.closest('.tab'); if (b) showView(b.dataset.view); });
+  const VIEWS = ['report', 'findings', 'graph', 'overview', 'hosts', 'sessions', 'iocs', 'packets'];
+  function showView(v) {
+    if (!VIEWS.includes(v)) v = 'findings';
+    for (const b of document.querySelectorAll('.tab')) b.setAttribute('aria-selected', b.dataset.view === v ? 'true' : 'false');
+    for (const el of document.querySelectorAll('.view')) el.hidden = el.id !== 'view-' + v;
+    if (v === 'overview') { drawTimeline(); drawIoGraph(); }
+    if (v === 'graph') renderGraphView();
+    settings.lastView = v; saveSettings();
+    if (location.hash.slice(1) !== v) { try { history.replaceState(null, '', '#' + v); } catch (e) { location.hash = v; } }
+  }
+  window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (VIEWS.includes(v) && !$('results').hidden) showView(v); });
+  $('killchain').addEventListener('click', e => { const b = e.target.closest('button[data-fid]'); if (b && state.result) { const f = state.result.findings.find(x => x.id === +b.dataset.fid); if (f) setFilter(filterForFinding(f)); } });
+
+  // ---------------- render
+  function render() {
+    const r = state.result, s = r.summary;
+    $('results').hidden = false;
+    drop.innerHTML = '<strong>Drop another capture</strong> to replace this one.';
+    const srcInfo = state.sources && state.sources.length > 1 ? state.sources.map(f => `<span title="${esc(f.name)}">${esc(f.name.length > 22 ? f.name.slice(0, 22) + '…' : f.name)}: ${fmtN(f.packets)} pkts</span>`).join('') : '';
+    $('capinfo').innerHTML = `<span><b>${esc(state.name)}</b></span><span>${esc(s.format)}</span><span>${esc(s.linktypeName)}</span><span>${s.packets ? fmtTs(s.start) : ''}</span><span>${A.fmtBytes(s.bytes)} on the wire</span>` + srcInfo;
+    const tiles = [
+      ['Packets', fmtN(s.packets), fmtDur(s.duration) + ' · ' + s.avgPps.toFixed(1) + ' pkt/s'],
+      ['Throughput', s.avgBps > 1e6 ? (s.avgBps / 1e6).toFixed(2) + ' Mb/s' : (s.avgBps / 1e3).toFixed(1) + ' kb/s', 'average over the capture'],
+      ['Hosts', fmtN(s.hosts), s.internalHosts + ' internal · ' + s.externalHosts + ' external'],
+      ['Sessions', fmtN(r.sessions.length), r.protocols.length + ' protocols seen'],
+    ];
+    $('tiles').innerHTML = tiles.map(t => `<div class="tile"><div class="k">${t[0]}</div><div class="v mono">${t[1]}</div><div class="s">${esc(t[2])}</div></div>`).join('') +
+      `<div class="tile sev"><div class="k">Findings</div><div class="v">${['high', 'medium', 'low', 'info'].filter(k => r.severity[k]).map(k => `<span class="pill ${k}">${r.severity[k]} ${k}</span>`).join('') || '<span class="pill info">none</span>'}</div></div>`;
+    $('warnings').innerHTML = s.warnings.map(w => `<div class="warn">${esc(w)}</div>`).join('');
+    $('nFind').textContent = r.findings.length; $('nHosts').textContent = r.hosts.length; $('nPkts').textContent = fmtN(s.packets);
+    $('nSess').textContent = fmtN(r.sessions.length); $('nIocs').textContent = fmtN(r.iocs.ips.length + r.iocs.domains.length);
+    renderFindings(); renderOverview(); renderHosts(); renderReport();
+    $('sessFilter').value = ''; state.sessFilter = ''; applySessions();
+    renderIocs();
+    $('filter').value = ''; state.filter = ''; applyFilter();
+    updateDemoBanner();
+    const keep = render._keep; render._keep = false;
+    const hashV = location.hash.slice(1);
+    const cur = keep ? ((document.querySelector('.tab[aria-selected="true"]') || {}).dataset || {}).view : (VIEWS.includes(hashV) ? hashV : null);
+    showView(cur || 'findings');
+  }
+
+  function renderFindings() {
+    const r = state.result;
+    const cats = ['all', 'high', 'medium', 'low', 'info'].filter(k => k === 'all' || r.severity[k]);
+    const catList = [...new Set(r.findings.map(f => f.category))].sort();
+    $('sevChips').innerHTML = cats.map(k => `<button type="button" class="chip" data-sev="${k}" aria-pressed="${state.sevFilter === k}">${k === 'all' ? 'All ' + r.findings.length : r.severity[k] + ' ' + k}</button>`).join('') + (catList.length ? `<select id="findCat" style="border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px;font-size:12.5px;margin-left:4px"><option value="">All categories</option>${catList.map(c => `<option value="${esc(c)}" ${state.catFilter === c ? 'selected' : ''}>${esc(c)} (${r.findings.filter(f => f.category === c).length})</option>`).join('')}</select>` : '');
+    const list = r.findings.filter(f => (state.sevFilter === 'all' || f.severity === state.sevFilter) && (!state.catFilter || f.category === state.catFilter));
+    if (!r.findings.length) { $('findingList').innerHTML = '<div class="none"><b>No anomalies detected.</b> The detectors found nothing unusual at this sensitivity. Try “High” sensitivity for a stricter pass, or browse the Sessions, Indicators and Packets views.</div>'; return; }
+    $('findingList').innerHTML = '<div class="cardlist">' + list.map(f => `
+      <article class="card ${f.severity}" id="f${f.id}">
+        <div class="head"><span class="pill ${f.severity}">${f.severity}</span><span class="cat">${esc(f.category)}</span><h3>${esc(f.title)}</h3></div>
+        <p>${esc(f.summary)}</p>
+        <dl class="evidence">${f.evidence.map(e => `<dt>${esc(e[0])}</dt><dd class="mono">${esc(e[1])}</dd>`).join('')}</dl>
+        <p class="advice">${esc(f.advice)}</p>
+        <div class="actions"><button type="button" class="btn small" data-pk="${f.id}">Show packets</button>${f.hosts.slice(0, 2).map(h => `<button type="button" class="btn small" data-host="${esc(h)}">All traffic for ${esc(h)}</button>`).join('')}</div>
+      </article>`).join('') + '</div>';
+  }
+  $('sevChips').addEventListener('click', e => { const c = e.target.closest('.chip'); if (c) { state.sevFilter = c.dataset.sev; renderFindings(); } });
+  $('sevChips').addEventListener('change', e => { if (e.target.id === 'findCat') { state.catFilter = e.target.value; renderFindings(); } });
+  $('findingList').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.pk) { const f = state.result.findings.find(x => x.id === +b.dataset.pk); setFilter(filterForFinding(f)); }
+    else if (b.dataset.host) setFilter('ip:' + b.dataset.host);
+  });
+  function filterForFinding(f) {
+    if (f.packets.length) return 'n:' + f.packets.slice(0, 200).join(',');
+    if (f.convKey) return f.convKey.split('|').map(h => 'ip:' + h).join(' ');
+    return f.hosts.slice(0, 1).map(h => 'ip:' + h).join(' ');
+  }
+  function setFilter(q) { $('filter').value = q; state.filter = q; applyFilter(); showView('packets'); window.scrollTo({ top: 0 }); }
+
+  function bars(el, rows, fmt) {
+    const max = Math.max(1, ...rows.map(r => r[1]));
+    el.innerHTML = rows.length ? rows.map(r => `<div class="bar"><span class="name mono" title="${esc(r[0])}">${esc(r[0])}</span><div class="track"><div class="fill" style="width:${(r[1] / max * 100).toFixed(1)}%"></div></div><span class="num mono">${fmt ? fmt(r[1]) : fmtN(r[1])}</span></div>`).join('') : '<span class="hint">none</span>';
+  }
+  function renderOverview() {
+    const r = state.result;
+    bars($('protoBars'), r.protocols);
+    bars($('portBars'), r.topPorts.map(p => [p.port + (p.name ? ' ' + p.name : ''), p.count]));
+    bars($('dnsBars'), r.topDomains);
+    bars($('sniBars'), r.topSni);
+    $('talkers').innerHTML = '<thead><tr><th>Host</th><th class="num">Packets</th><th class="num">Sent</th><th class="num">Received</th></tr></thead><tbody>' + r.topTalkers.map(h => `<tr><td><button class="link" data-host="${esc(h.ip)}">${esc(h.ip)}</button> ${h.internal ? '' : '<span class="zone ext">ext</span>'}</td><td class="num mono">${fmtN(h.pkts)}</td><td class="num mono">${A.fmtBytes(h.bytesOut)}</td><td class="num mono">${A.fmtBytes(h.bytesIn)}</td></tr>`).join('') + '</tbody>';
+    $('convs').innerHTML = '<thead><tr><th>A</th><th>B</th><th class="num">A→B</th><th class="num">B→A</th><th>Protocols</th></tr></thead><tbody>' + r.topConvs.map(c => `<tr><td><button class="link" data-host="${esc(c.a)}">${esc(c.a)}</button></td><td><button class="link" data-host="${esc(c.b)}">${esc(c.b)}</button></td><td class="num mono">${A.fmtBytes(c.bytesAB)}</td><td class="num mono">${A.fmtBytes(c.bytesBA)}</td><td>${esc([...c.protos].slice(0, 4).join(', '))}</td></tr>`).join('') + '</tbody>';
+    $('timelineHint').textContent = 'Packets per bar; each bar is ' + fmtDur(r.bucket) + '. Bars whose window contains a finding are tinted by its highest severity.';
+    renderProtoTree(); renderTcpHealth(); makeSortable($('talkers')); makeSortable($('convs'));
+  }
+  function renderTcpHealth() {
+    const h = state.result.tcpHealth; if (!h) return;
+    $('tcpHealthSummary').innerHTML = `<span><b>${fmtN(h.flows)}</b> TCP flows</span><span>Retransmissions <b>${fmtN(h.retrans)}</b> (${h.retransPct.toFixed(1)}%)</span><span>Out-of-order <b>${fmtN(h.ooo)}</b></span><span>Dup ACKs <b>${fmtN(h.dupAck)}</b></span><span>Zero-window <b>${fmtN(h.zwin)}</b></span><span>Resets <b>${fmtN(h.rst)}</b></span><span>Median handshake RTT <b>${h.medianRttMs != null ? h.medianRttMs.toFixed(1) + ' ms' : '—'}</b></span>`;
+    $('tcpHealthTable').innerHTML = h.worst.length ? '<thead><tr><th>Flow</th><th class="num">Retx</th><th class="num">OOO</th><th class="num">DupACK</th><th class="num">ZeroWin</th><th class="num">RTT</th><th class="num">Data pkts</th></tr></thead><tbody>' + h.worst.map(w => `<tr><td class="mono wrap"><button class="link" data-host="${esc(w.src)}">${esc(w.src)}:${w.sport}</button> → ${esc(w.dst)}:${w.dport}</td><td class="num mono">${w.retrans}</td><td class="num mono">${w.ooo}</td><td class="num mono">${w.dupAck}</td><td class="num mono">${w.zwin}</td><td class="num mono">${w.rtt != null ? (w.rtt * 1000).toFixed(0) + 'ms' : '—'}</td><td class="num mono">${fmtN(w.dataPkts)}</td></tr>`).join('') + '</tbody>' : '<tbody><tr><td class="muted">No TCP stream issues detected.</td></tr></tbody>';
+  }
+  function renderProtoTree() {
+    const t = state.result.protoTree; if (!t) return; const total = t.bytes || 1;
+    const rows = [];
+    const walk = (nodes, depth) => { for (const k of nodes) { rows.push(`<tr><td class="wrap"><span style="display:inline-block;width:${depth * 16}px"></span>${depth ? '└ ' : ''}${esc(k.name)}</td><td class="num mono">${fmtN(k.pkts)}</td><td class="num mono">${A.fmtBytes(k.bytes)}</td><td class="num mono">${(k.bytes / total * 100).toFixed(1)}%</td></tr>`); if (k.kids && k.kids.length && depth < 3) walk(k.kids, depth + 1); } };
+    walk(t.kids, 0);
+    $('protoTree').innerHTML = '<thead><tr><th>Protocol</th><th class="num">Packets</th><th class="num">Bytes</th><th class="num">% bytes</th></tr></thead><tbody>' + rows.join('') + '</tbody>';
+  }
+  function drawIoGraph() {
+    const c = $('iograph'); const r = state.result; if (!r || !c) return;
+    const cs = getComputedStyle(document.documentElement), col = k => cs.getPropertyValue(k).trim();
+    const W = c.clientWidth || 600, H = 150, dpr = window.devicePixelRatio || 1; c.width = W * dpr; c.height = H * dpr; const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const tl = r.timeline, bucket = r.bucket || 1; const padL = 52, padR = 8, padT = 8, padB = 20; const iw = W - padL - padR, ih = H - padT - padB;
+    const bps = tl.map(b => b.bytes / bucket); const max = Math.max(1, ...bps);
+    g.font = '11px ' + col('--font-mono'); g.fillStyle = col('--muted'); g.strokeStyle = col('--line');
+    for (let i = 0; i <= 3; i++) { const y = padT + ih - ih * i / 3; g.beginPath(); g.moveTo(padL, y); g.lineTo(W - padR, y); g.stroke(); g.textAlign = 'right'; const v = max * i / 3; g.fillText(v > 125000 ? (v * 8 / 1e6).toFixed(1) + 'Mb' : (v * 8 / 1e3).toFixed(0) + 'kb', padL - 6, y + 4); }
+    g.beginPath(); g.moveTo(padL, padT + ih);
+    bps.forEach((v, i) => { const x = padL + (tl.length <= 1 ? iw / 2 : iw * i / (tl.length - 1)), y = padT + ih - v / max * ih; g.lineTo(x, y); });
+    g.lineTo(padL + iw, padT + ih); g.closePath(); g.fillStyle = col('--accent'); g.globalAlpha = 0.18; g.fill(); g.globalAlpha = 1;
+    g.beginPath(); bps.forEach((v, i) => { const x = padL + (tl.length <= 1 ? iw / 2 : iw * i / (tl.length - 1)), y = padT + ih - v / max * ih; i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.strokeStyle = col('--accent'); g.lineWidth = 1.5; g.stroke();
+  }
+  function renderHosts() {
+    const r = state.result;
+    const rows = r.hosts.slice(0, 500);
+    $('hostTable').innerHTML = '<thead><tr><th>Host</th><th>Zone</th><th class="num">Packets</th><th class="num">Sent</th><th class="num">Received</th><th class="num">DNS queries</th><th class="num">Findings</th><th>First seen</th><th>Last seen</th></tr></thead><tbody>' + rows.map(h => `<tr><td><button class="link" data-host="${esc(h.ip)}">${esc(h.ip)}</button></td><td><span class="zone ${h.internal ? '' : 'ext'}">${h.internal ? 'internal' : 'external'}</span></td><td class="num mono">${fmtN(h.pkts)}</td><td class="num mono">${A.fmtBytes(h.bytesOut)}</td><td class="num mono">${A.fmtBytes(h.bytesIn)}</td><td class="num mono">${h.dnsQueries}</td><td class="num mono">${h.findings || ''}</td><td class="mono">+${isFinite(h.first) ? (h.first - r.summary.start).toFixed(2) : '—'} s</td><td class="mono">+${(h.last - r.summary.start).toFixed(2)} s</td></tr>`).join('') + '</tbody>' + (r.hosts.length > 500 ? `<tfoot><tr><td colspan="9" class="hint">Showing the 500 busiest of ${fmtN(r.hosts.length)} hosts.</td></tr></tfoot>` : '');
+    makeSortable($('hostTable'));
+  }
+  document.addEventListener('click', e => { const b = e.target.closest('button.link[data-host]'); if (b) hostView(b.dataset.host); });
+  document.addEventListener('click', e => { const cv = e.target.closest('.cv'); if (cv) { e.stopPropagation(); copy(cv.textContent.trim(), 'Copied'); } });
+  // ---------------- host view
+  function hostView(ip) {
+    const r = state.result; if (!r) return;
+    const h = r.hosts.find(x => x.ip === ip) || { ip, pkts: 0, bytesOut: 0, bytesIn: 0, internal: A.isPrivate(ip), first: Infinity, last: 0, dnsQueries: 0 };
+    const ioc = r.iocs.ips.find(x => x.ip === ip);
+    const asset = (r.artifacts.assets || []).find(a => a.ip === ip);
+    const finds = r.findings.filter(f => f.hosts.includes(ip));
+    const sess = r.sessions.filter(s => s.src === ip || s.dst === ip);
+    const names = ioc ? ioc.names : (asset ? asset.names : []);
+    let b = `<dl class="kvlist"><dt>Zone</dt><dd><span class="zone ${h.internal ? '' : 'ext'}">${h.internal ? 'internal' : 'external'}</span></dd>${names && names.length ? `<dt>Name(s)</dt><dd class="mono cv">${esc(names.join(', '))}</dd>` : ''}${asset && asset.os.length ? `<dt>OS</dt><dd>${esc(asset.os.join(', '))}</dd>` : ''}${ioc && ioc.intel ? `<dt>Network / region</dt><dd>${esc([ioc.intel.net, ioc.intel.region].filter(v => v && v !== 'unknown').join(' · '))}</dd>` : ''}<dt>Packets</dt><dd class="mono">${fmtN(h.pkts)}</dd><dt>Sent / received</dt><dd class="mono">${A.fmtBytes(h.bytesOut)} / ${A.fmtBytes(h.bytesIn)}</dd><dt>Active</dt><dd class="mono">${relTs(h.first)} → ${relTs(h.last)}</dd></dl>`;
+    b += `<div style="display:flex;gap:8px;margin:10px 0;flex-wrap:wrap"><button class="btn small" id="hostPkts" data-hv="${esc(ip)}" type="button">All packets</button><span class="cv mono" style="padding:4px 8px;background:var(--surface-2);border-radius:4px">${esc(ip)}</span></div>`;
+    b += `<h3 style="font-size:13px;margin-top:6px">Findings (${finds.length})</h3>`;
+    b += finds.length ? '<div class="scroll"><table><tbody>' + finds.map(f => `<tr><td><span class="pill ${f.severity}">${f.severity}</span></td><td class="wrap">${esc(f.title)}${f.attack ? ' <span class="tag q">' + esc(f.attack.id) + '</span>' : ''}</td></tr>`).join('') + '</tbody></table></div>' : '<p class="muted" style="font-size:13px">None.</p>';
+    b += `<h3 style="font-size:13px;margin-top:10px">Sessions (${fmtN(sess.length)})</h3>`;
+    b += sess.length ? '<div class="scroll"><table><thead><tr><th>Peer</th><th class="num">Port</th><th>Proto</th><th class="num">Bytes</th></tr></thead><tbody>' + sess.slice(0, 60).map(s => { const peer = s.src === ip ? s.dst : s.src; return `<tr><td class="mono wrap">${esc(peer)}${s.name ? ' <span class="muted">' + esc(s.name) + '</span>' : ''}</td><td class="num mono">${s.dport}</td><td>${esc(s.proto.toUpperCase())}</td><td class="num mono">${A.fmtBytes(s.cBytes + s.sBytes)}</td></tr>`; }).join('') + '</tbody></table></div>' + (sess.length > 60 ? '<p class="hint">Showing 60 of ' + fmtN(sess.length) + '.</p>' : '') : '<p class="muted" style="font-size:13px">None.</p>';
+    $('hostTitle').textContent = 'Host ' + ip; $('hostBody').innerHTML = b; $('hostModal').hidden = false;
+  }
+  $('hostClose').addEventListener('click', () => $('hostModal').hidden = true);
+  $('hostModal').addEventListener('click', e => { if (e.target.id === 'hostModal') $('hostModal').hidden = true; const pk = e.target.closest('#hostPkts'); if (pk) { $('hostModal').hidden = true; setFilter('ip:' + pk.dataset.hv); } });
+  // ---------------- sortable tables
+  function makeSortable(table) { if (!table) return; const ths = table.querySelectorAll('thead th'); ths.forEach((th, i) => { if (th.classList.contains('nosort')) return; th.classList.add('sortable'); th.onclick = () => sortTable(table, i, th); }); }
+  function sortTable(table, i, th) { const tb = table.querySelector('tbody'); if (!tb) return; const rows = [...tb.querySelectorAll('tr')].filter(r => r.children.length > i); const asc = !th.classList.contains('asc'); table.querySelectorAll('th').forEach(h => h.classList.remove('asc', 'desc')); th.classList.add(asc ? 'asc' : 'desc'); const key = tr => { const td = tr.children[i]; const txt = td ? td.textContent.trim() : ''; const n = parseFloat(txt.replace(/[, %]/g, '').replace(/[^0-9.\-].*$/, '')); return { n: isNaN(n) ? null : n, t: txt.toLowerCase() }; }; rows.sort((a, b) => { const va = key(a), vb = key(b); if (va.n != null && vb.n != null) return asc ? va.n - vb.n : vb.n - va.n; return asc ? va.t.localeCompare(vb.t) : vb.t.localeCompare(va.t); }); rows.forEach(r => tb.appendChild(r)); }
+
+  // ---------------- sessions
+  function parseSessTerms(q) {
+    return q.trim().split(/\s+/).filter(Boolean).map(tok => {
+      let neg = false; if (tok.startsWith('!')) { neg = true; tok = tok.slice(1); }
+      const m = /^(host|src|dst|port|proto|name):(.+)$/i.exec(tok);
+      if (m) return { neg, k: m[1].toLowerCase(), v: m[2].toLowerCase() };
+      const kw = tok.toLowerCase();
+      if (kw === 'external' || kw === 'internal' || kw === 'partial') return { neg, k: kw, v: '' };
+      return { neg, k: 'text', v: kw };
+    });
+  }
+  function sessMatch(s, terms) {
+    for (const t of terms) {
+      let ok;
+      if (t.k === 'host') ok = s.src.toLowerCase() === t.v || s.dst.toLowerCase() === t.v;
+      else if (t.k === 'src') ok = s.src.toLowerCase() === t.v;
+      else if (t.k === 'dst') ok = s.dst.toLowerCase() === t.v;
+      else if (t.k === 'port') ok = s.sport === +t.v || s.dport === +t.v;
+      else if (t.k === 'proto') ok = s.proto === t.v;
+      else if (t.k === 'name') ok = (s.name || '').toLowerCase().includes(t.v);
+      else if (t.k === 'external') ok = s.external;
+      else if (t.k === 'internal') ok = !s.external;
+      else if (t.k === 'partial') ok = s.partial;
+      else ok = (s.src + ' ' + s.dst + ' ' + s.proto + ' ' + (s.name || '') + ' ' + (s.app || '')).toLowerCase().includes(t.v);
+      if (t.neg ? ok : !ok) return false;
+    }
+    return true;
+  }
+  function applySessions() {
+    const r = state.result; const terms = parseSessTerms(state.sessFilter);
+    let rows = terms.length ? r.sessions.filter(s => sessMatch(s, terms)) : r.sessions.slice();
+    const k = state.sessSort;
+    if (k !== 'start') rows.sort((a, b) => b[k] - a[k]); else rows.sort((a, b) => a.start - b.start);
+    state.sessRows = rows; state.sessShown = 0;
+    $('sessTable').innerHTML = '<thead><tr><th>Start</th><th>Client</th><th>Server</th><th class="num">Port</th><th>Proto</th><th>Server name</th><th class="num">Sent</th><th class="num">Recv</th><th class="num">RTT</th><th class="num">Retx</th><th class="num">Dur</th><th></th></tr></thead><tbody></tbody>';
+    renderSessMore();
+  }
+  function renderSessMore() {
+    const tb = $('sessTable').querySelector('tbody'); const start = state.sessShown, end = Math.min(state.sessRows.length, start + 200);
+    let html = '';
+    for (let i = start; i < end; i++) {
+      const s = state.sessRows[i];
+      const fs = (state.result.iocs.ips.find(x => x.ip === s.dst) || {}).findings || [];
+      html += `<tr class="${fs.length ? 'high' : ''}" data-dst="${esc(s.dst)}" data-src="${esc(s.src)}"><td class="mono">${relTs(s.start)}</td><td class="mono">${esc(s.src)}</td><td class="mono">${esc(s.dst)} ${s.external ? '<span class="zone ext">ext</span>' : ''}</td><td class="num mono">${s.dport}</td><td>${esc(s.proto.toUpperCase())}${s.app ? ' <span class="zone">' + esc(s.app) + '</span>' : ''}</td><td class="wrap mono">${esc(s.name || '')}${s.partial ? ' <span class="tag q">partial</span>' : ''}</td><td class="num mono">${A.fmtBytes(s.cBytes)}</td><td class="num mono">${A.fmtBytes(s.sBytes)}</td><td class="num mono">${s.rtt != null ? (s.rtt * 1000).toFixed(0) + 'ms' : '—'}</td><td class="num mono">${s.retrans || ''}</td><td class="num mono">${fmtDur(s.dur)}</td><td>${s.proto === 'tcp' ? `<button class="btn small" data-stream="${esc(s.src)}:${s.sport}>${esc(s.dst)}:${s.dport}" type="button">Stream</button>` : ''}</td></tr>`;
+    }
+    tb.insertAdjacentHTML('beforeend', html); state.sessShown = end;
+    const left = state.sessRows.length - end;
+    $('sessMore').innerHTML = state.sessRows.length ? `<div class="filterbar"><span class="hint" style="flex-basis:auto">Showing ${fmtN(end)} of ${fmtN(state.sessRows.length)} sessions.</span>${left > 0 ? '<button type="button" class="btn small" id="sessMoreBtn">Show ' + fmtN(Math.min(200, left)) + ' more</button>' : ''}</div>` : '<div class="none">No sessions match this filter.</div>';
+  }
+  let st2; $('sessFilter').addEventListener('input', e => { clearTimeout(st2); st2 = setTimeout(() => { state.sessFilter = e.target.value; applySessions(); }, 200); });
+  $('sessSort').addEventListener('change', e => { state.sessSort = e.target.value; applySessions(); });
+  $('sessMore').addEventListener('click', e => { if (e.target.id === 'sessMoreBtn') renderSessMore(); });
+  $('sessTable').addEventListener('click', e => { const sb = e.target.closest('button[data-stream]'); if (sb) { e.stopPropagation(); const m = /^(.+):(\d+)>(.+):(\d+)$/.exec(sb.dataset.stream); if (m) followStream(m[1], +m[2], m[3], +m[4]); return; } const tr = e.target.closest('tr[data-dst]'); if (tr) setFilter('ip:' + tr.dataset.src + ' ip:' + tr.dataset.dst); });
+  let streamState = null;
+  function followStream(csrc, csport, cdst, cdport) {
+    // lazily reassemble the TCP conversation from the decoded packets by sequence number
+    const segs = { c: [], s: [] }; const baseSeq = { c: null, s: null };
+    for (const p of state.pkts) {
+      if (!p.tcp) continue; const t = p.tcp;
+      let dir = null;
+      if (p.src === csrc && t.sport === csport && p.dst === cdst && t.dport === cdport) dir = 'c';
+      else if (p.src === cdst && t.sport === cdport && p.dst === csrc && t.dport === csport) dir = 's';
+      if (!dir) continue;
+      if ((t.flags & 0x02) && baseSeq[dir] == null) baseSeq[dir] = t.seq;
+      if (t.payloadLen > 0) { if (baseSeq[dir] == null) baseSeq[dir] = t.seq; segs[dir].push({ rel: (t.seq - baseSeq[dir]) >>> 0, seq: t.seq, data: t.payload, ts: p.ts, n: p.n }); }
+    }
+    function assemble(list) { if (!list.length) return new Uint8Array(0); list.sort((a, b) => a.rel - b.rel); let end = 0; const chunks = []; for (const s of list) { if (s.rel + s.data.length <= end) continue; const skip = Math.max(0, end - s.rel); chunks.push(s.data.subarray(skip)); end = s.rel + s.data.length; } const total = chunks.reduce((a, c) => a + c.length, 0); const out = new Uint8Array(total); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; }
+    // interleave by time for display (client vs server)
+    const all = segs.c.map(x => ({ ...x, dir: 'c' })).concat(segs.s.map(x => ({ ...x, dir: 's' }))).sort((a, b) => a.ts - b.ts || a.n - b.n);
+    streamState = { csrc, csport, cdst, cdport, c: assemble(segs.c.slice()), s: assemble(segs.s.slice()), all, hex: false };
+    $('streamTitle').textContent = 'Follow stream · ' + csrc + ':' + csport + ' ↔ ' + cdst + ':' + cdport;
+    $('streamMeta').innerHTML = `${fmtN(streamState.c.length)} B client→server (<span class="c2s">blue</span>), ${fmtN(streamState.s.length)} B server→client (<span class="s2c">red</span>). Reassembled by sequence number; gaps from missing packets are skipped.`;
+    renderStream();
+    $('streamModal').hidden = false;
+  }
+  function esc2(b, s, e) { let r = ''; for (let i = s; i < e && i < b.length; i++) { const ch = b[i]; r += (ch >= 32 && ch < 127) ? String.fromCharCode(ch) : (ch === 10 ? '\n' : ch === 13 ? '' : '.'); } return r; }
+  function hexDump(b) { let out = ''; const n = Math.min(b.length, 65536); for (let i = 0; i < n; i += 16) { let h = '', a = ''; for (let j = i; j < Math.min(n, i + 16); j++) { h += b[j].toString(16).padStart(2, '0') + ' '; const ch = b[j]; a += ch >= 32 && ch < 127 ? String.fromCharCode(ch) : '.'; } out += i.toString(16).padStart(6, '0') + '  ' + h.padEnd(48) + ' ' + a + '\n'; } if (b.length > n) out += '… ' + (b.length - n) + ' more bytes\n'; return out; }
+  function renderStream() {
+    const st = streamState; if (!st) return;
+    if (st.hex) { $('streamBody').innerHTML = '<span class="c2s">— client → server —</span>\n' + esc(hexDump(st.c)) + '\n<span class="s2c">— server → client —</span>\n' + esc(hexDump(st.s)); return; }
+    // interleaved conversation (capped)
+    let html = ''; let shown = 0;
+    for (const seg of st.all) { if (shown > 200000) { html += '\n… (truncated)'; break; } const txt = esc2(seg.data, 0, Math.min(seg.data.length, 20000)); shown += txt.length; html += `<span class="${seg.dir === 'c' ? 'c2s' : 's2c'}">${esc(txt)}</span>`; }
+    $('streamBody').innerHTML = html || '<span class="muted">No payload bytes in this conversation (control packets only, or encrypted with no plaintext).</span>';
+  }
+  $('streamHex').addEventListener('click', () => { if (streamState) { streamState.hex = !streamState.hex; $('streamHex').textContent = streamState.hex ? 'Text' : 'Hex'; renderStream(); } });
+  $('streamClose').addEventListener('click', () => { $('streamModal').hidden = true; });
+  $('streamModal').addEventListener('click', e => { if (e.target.id === 'streamModal') $('streamModal').hidden = true; });
+  $('sessCsv').addEventListener('click', () => {
+    if (!state.result) return;
+    const head = ['start_rel_s', 'client', 'client_port', 'server', 'server_port', 'proto', 'app', 'server_name', 'bytes_sent', 'bytes_recv', 'pkts_sent', 'pkts_recv', 'duration_s', 'external', 'partial'];
+    const t0 = state.result.summary.start;
+    const rows = state.sessRows.map(s => [(s.start - t0).toFixed(4), s.src, s.sport, s.dst, s.dport, s.proto, s.app, s.name, s.cBytes, s.sBytes, s.cPkts, s.sPkts, s.dur.toFixed(3), s.external ? 'yes' : 'no', s.partial ? 'yes' : 'no']);
+    copy(toCsv(head, rows), fmtN(rows.length) + ' sessions (CSV)');
+  });
+
+  // ---------------- indicators
+  function renderIocs() {
+    const r = state.result; const tab = state.iocTab; const art = r.artifacts || { files: [], certs: [], credentials: [], ja3: [], ja4: [], assets: [] };
+    const tabs = [['ips', 'IPs ' + r.iocs.ips.length], ['domains', 'Domains ' + r.iocs.domains.length], ['names', 'TLS names ' + r.iocs.names.length], ['files', 'Files ' + art.files.length], ['certs', 'Certs ' + art.certs.length], ['creds', 'Credentials ' + art.credentials.length], ['fp', 'Fingerprints ' + (art.ja3.length + art.ja4.length + (art.ja3s || []).length)], ['assets', 'Assets ' + art.assets.length]];
+    $('iocChips').innerHTML = tabs.map(t => `<button type="button" class="chip" data-ioc="${t[0]}" aria-pressed="${tab === t[0]}">${esc(t[1])}</button>`).join('');
+    let html = '', cols = 8;
+    if (tab === 'ips') {
+      html = '<thead><tr><th>IP address</th><th>Resolved from</th><th>Network / region</th><th class="num">Pkts</th><th class="num">Out</th><th class="num">In</th><th>Last</th><th>Findings</th></tr></thead><tbody>' +
+        r.iocs.ips.slice(0, 1000).map(x => `<tr class="${x.findings.length ? 'high' : ''}" data-dst="${esc(x.ip)}"><td class="mono cv">${esc(x.ip)}${x.resolved ? '' : ' <span class="tag q">direct-IP</span>'}</td><td class="wrap mono">${esc(x.names.join(', '))}</td><td class="wrap">${x.intel ? (x.intel.net ? '<b>' + esc(x.intel.net) + '</b> ' : '') + '<span class="muted">' + esc(x.intel.region || '') + '</span>' : ''}</td><td class="num mono">${fmtN(x.pkts)}</td><td class="num mono">${A.fmtBytes(x.bytesOut)}</td><td class="num mono">${A.fmtBytes(x.bytesIn)}</td><td class="mono">${relTs(x.last)}</td><td>${x.findings.map(id => '<span class="tag">#' + id + '</span>').join(' ')}</td></tr>`).join('') + '</tbody>';
+    } else if (tab === 'domains') {
+      html = '<thead><tr><th>Domain</th><th class="num">Queries</th><th class="num">Clients</th><th class="num">Subdomains</th><th>Record types</th><th class="num">IPs</th><th class="num">Min TTL</th><th></th></tr></thead><tbody>' +
+        r.iocs.domains.slice(0, 1000).map(d => `<tr class="${d.flagged ? 'high' : ''}"><td class="wrap mono cv">${esc(d.domain)}</td><td class="num mono">${fmtN(d.queries)}</td><td class="num mono">${d.clients}</td><td class="num mono">${d.subdomains}</td><td class="wrap">${esc(d.types)}</td><td class="num mono">${d.ipCount || ''}</td><td class="num mono">${d.minTtl != null ? d.minTtl + ' s' : ''}</td><td>${d.flagged ? '<span class="tag">finding</span>' : ''}</td></tr>`).join('') + '</tbody>';
+    } else if (tab === 'names') {
+      cols = 2; html = '<thead><tr><th>TLS server name (SNI)</th><th class="num">Client Hellos</th></tr></thead><tbody>' +
+        r.iocs.names.slice(0, 1000).map(x => `<tr><td class="wrap mono">${esc(x.name)}</td><td class="num mono">${fmtN(x.hellos)}</td></tr>`).join('') + '</tbody>';
+    } else if (tab === 'files') {
+      cols = 6; html = '<thead><tr><th>SHA-256</th><th>Type</th><th class="num">Size</th><th>Source URL</th><th>Requested by</th><th>Content-Type</th></tr></thead><tbody>' +
+        (art.files.length ? art.files.slice(0, 1000).map(f => `<tr class="${f.dangerous ? 'high' : ''}" data-dst="${esc(f.dst)}"><td class="wrap mono cv">${esc(f.sha256)}</td><td class="wrap">${esc(f.type)}${f.partial ? ' <span class="tag q">partial</span>' : ''}</td><td class="num mono">${A.fmtBytes(f.bytes)}</td><td class="wrap mono">${esc((f.host || f.dst) + (f.path || ''))}</td><td class="mono">${esc(f.src)}</td><td class="wrap">${esc(f.ctype || '')}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">No files were carved. Only unencrypted transfers (HTTP) with the body present in the capture can be extracted.</td></tr>') + '</tbody>';
+    } else if (tab === 'certs') {
+      cols = 6; html = '<thead><tr><th>SHA-1 thumbprint</th><th>Subject CN</th><th>Issuer CN</th><th>Valid until</th><th>SNI</th><th>Server</th></tr></thead><tbody>' +
+        (art.certs.length ? art.certs.slice(0, 1000).map(c => `<tr class="${c.selfSigned ? 'high' : ''}" data-dst="${esc(c.dst)}"><td class="wrap mono cv">${esc(c.sha1)}</td><td class="wrap mono">${esc(c.subject || '')}${c.selfSigned ? ' <span class="tag">self-signed</span>' : ''}</td><td class="wrap mono">${esc(c.issuer || '')}</td><td class="mono">${c.notAfter ? esc(new Date(c.notAfter * 1000).toISOString().slice(0, 10)) : ''}</td><td class="wrap mono">${esc(c.sni || '')}</td><td class="mono">${esc(c.dst)}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">No certificates extracted. Certificates are visible only in TLS 1.2 and earlier handshakes (TLS 1.3 encrypts them).</td></tr>') + '</tbody>';
+    } else if (tab === 'creds') {
+      cols = 4; html = '<thead><tr><th>Scheme</th><th>Account(s)</th><th>Client → Server</th><th class="num">Count</th></tr></thead><tbody>' +
+        (art.credentials.length ? art.credentials.map(c => `<tr class="high" data-dst="${esc(c.dst)}"><td class="wrap">${esc(c.scheme)}</td><td class="wrap mono">${esc(c.users.join(', ') || '—')}</td><td class="mono">${esc(c.src)} → ${esc(c.dst)}</td><td class="num mono">${c.count}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">No credential material captured (cleartext logins, NTLM, Kerberos).</td></tr>') + '</tbody>';
+    } else if (tab === 'fp') {
+      cols = 4; const rows = art.ja3.map(j => ['JA3', j.ja3, j.src, j.known || '']).concat(art.ja4.map(j => ['JA4', j.ja4, j.src, ''])).concat((art.ja3s || []).map(j => ['JA3S', j.ja3s, j.dst, 'server']));
+      html = '<thead><tr><th>Kind</th><th>Fingerprint</th><th>Host</th><th>Attribution</th></tr></thead><tbody>' +
+        (rows.length ? rows.slice(0, 1000).map(x => `<tr class="${x[3] ? 'high' : ''}" data-dst="${esc(x[2])}"><td>${x[0]}</td><td class="wrap mono cv">${esc(x[1])}</td><td class="mono">${esc(x[2])}</td><td class="wrap">${esc(x[3])}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">No TLS client fingerprints.</td></tr>') + '</tbody>';
+    } else if (tab === 'assets') {
+      cols = 4; html = '<thead><tr><th>Internal host</th><th>Hostname(s)</th><th>OS</th><th>Source</th></tr></thead><tbody>' +
+        (art.assets.length ? art.assets.map(a => `<tr data-dst="${esc(a.ip)}"><td class="mono">${esc(a.ip)}</td><td class="wrap mono">${esc(a.names.join(', '))}</td><td>${esc(a.os.join(', '))}</td><td class="wrap">${esc(a.sources.join(', '))}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">No host identities recovered (from DHCP, mDNS or NBNS).</td></tr>') + '</tbody>';
+    }
+    const srcArr = tab === 'files' ? art.files : tab === 'certs' ? art.certs : tab === 'creds' ? art.credentials : tab === 'assets' ? art.assets : tab === 'fp' ? art.ja3 : r.iocs[tab];
+    $('iocTable').innerHTML = html + (srcArr && srcArr.length > 1000 ? `<tfoot><tr><td colspan="${cols}" class="hint">Showing the first 1,000 of ${fmtN(srcArr.length)}.</td></tr></tfoot>` : '');
+    makeSortable($('iocTable'));
+  }
+  $('iocChips').addEventListener('click', e => { const c = e.target.closest('.chip'); if (c) { state.iocTab = c.dataset.ioc; renderIocs(); } });
+  $('iocTable').addEventListener('click', e => { const tr = e.target.closest('tr[data-dst]'); if (tr && tr.dataset.dst) setFilter('ip:' + tr.dataset.dst); });
+  $('iocExportBtn').addEventListener('click', () => {
+    if (!state.result) { toast('Load a capture first'); return; }
+    const fmt = $('iocExport').value; const out = A.exportIoCs(state.result, fmt, { name: state.name });
+    const label = { csv: 'IOC CSV', defang: 'Defanged IOC list', stix: 'STIX bundle', misp: 'MISP event', suricata: 'Suricata rules', yara: 'YARA rule', sigma: 'Sigma rule', openioc: 'OpenIOC', cef: 'CEF events', zeek: 'Zeek logs', navigator: 'ATT&CK Navigator layer' }[fmt] || 'Export';
+    if (!out || !out.trim()) { toast('No exportable indicators'); return; }
+    copy(out, label);
+  });
+  function toCsv(head, rows) {
+    const q = v => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    return [head.join(','), ...rows.map(r => r.map(q).join(','))].join('\n');
+  }
+
+  // ---------------- IR report
+  function renderReport() {
+    const r = state.result; if (!r) return;
+    const rep = A.buildReport(r, reportMeta());
+    state.report = rep; const e = rep.exec; const an = settings.analyst || {};
+    const sevPills = ['high', 'medium', 'low', 'info'].filter(k => e.counts[k]).map(k => `<span class="pill ${k}">${e.counts[k]} ${k}</span>`).join(' ') || '<span class="pill info">none</span>';
+    let h = '';
+    const tlpClass = an.tlp ? 'tlp-' + an.tlp.replace('TLP:', '').split('+')[0] : '';
+    if (an.name || an.org || an.case || an.tlp) h += `<div class="head-row" style="margin-bottom:4px">${an.tlp ? `<span class="tlp ${tlpClass}">${esc(an.tlp)}</span>` : '<span></span>'}<span class="muted" style="font-size:12.5px">${[an.name && 'Analyst: ' + an.name, an.org, an.case && 'Case ' + an.case].filter(Boolean).map(esc).join(' · ')}</span></div>`;
+    h += `<h2>Executive summary</h2><div class="assess ${e.posture}">${esc(e.postureText)}</div>`;
+    h += `<dl class="kvlist"><dt>Headline</dt><dd>${esc(e.headline)}</dd><dt>Findings</dt><dd>${sevPills}</dd><dt>Affected internal hosts</dt><dd>${e.affectedAssets}</dd>${e.c2Endpoints.length ? `<dt>Endpoints in findings</dt><dd class="mono">${e.c2Endpoints.slice(0, 12).map(esc).join(', ')}${e.c2Endpoints.length > 12 ? ' …' : ''}</dd>` : ''}<dt>Capture window</dt><dd class="mono">${esc(fmtTs(rep.scope.start))} → ${esc(fmtTs(rep.scope.end))} (${fmtDur(rep.scope.duration)})</dd><dt>Scope</dt><dd>${fmtN(rep.scope.packets)} packets · ${A.fmtBytes(rep.scope.bytes)} · ${rep.scope.hosts} hosts · ${fmtN(rep.scope.sessions)} sessions · ${rep.sources.length} file(s)</dd></dl>`;
+    if (rep.recommendations.length) h += `<h3>Immediate recommended actions</h3><ol>${rep.recommendations.map(x => `<li><span class="phase">${esc(x.phase)}</span> ${esc(x.text)}</li>`).join('')}</ol>`;
+    if (rep.narrative.length) h += `<h2>Probable attack narrative</h2><p class="muted">Reconstructed for the most-affected host, in observed order. Heuristic — validate against host evidence.</p><div class="narr">${rep.narrative.map(n => `<div class="step"><span class="at">${esc(n.at)}</span><span><span class="phase">${esc(n.phase)}</span> <span class="pill ${n.severity}">${n.severity}</span> ${esc(n.title)} <button class="link" data-fid="${n.id}">#${n.id}</button></span></div>`).join('')}</div>`;
+    h += `<h2>Incident timeline</h2><div class="scroll"><table><thead><tr><th>Time</th><th>Phase</th><th>Sev</th><th>Finding</th><th>Hosts</th></tr></thead><tbody>${rep.timeline.map(t => `<tr><td class="mono">${esc(t.at)}</td><td>${esc(t.phase)}</td><td><span class="pill ${t.severity}">${t.severity}</span></td><td class="wrap">${esc(t.title)}</td><td class="wrap mono">${t.hosts.slice(0, 3).map(esc).join(', ')}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No actionable findings.</td></tr>'}</tbody></table></div>`;
+    h += `<h2>Affected assets</h2>`;
+    h += rep.assets.length ? `<div class="scroll"><table><thead><tr><th>Host</th><th>Worst</th><th>First</th><th>Phases</th><th>Findings</th></tr></thead><tbody>${rep.assets.map(a => `<tr><td class="mono"><button class="link" data-host="${esc(a.ip)}">${esc(a.ip)}</button></td><td><span class="pill ${a.worst}">${a.worst}</span></td><td class="mono">${esc(fmtOffsetUI(a.first - rep.scope.start))}</td><td class="wrap">${a.phases.map(esc).join(', ')}</td><td class="mono">${a.findings.map(id => `<button class="link" data-fid="${id}">#${id}</button>`).join(' ')}</td></tr>`).join('')}</tbody></table></div>` : `<p class="muted">No internal hosts were implicated by actionable findings.</p>`;
+    if (rep.attackCoverage && rep.attackCoverage.length) {
+      h += `<h2>MITRE ATT&CK coverage</h2><div class="scroll"><table><thead><tr><th>Tactic</th><th>Techniques observed</th></tr></thead><tbody>` +
+        rep.attackCoverage.map(g => `<tr><td>${esc(g.tactic)} <span class="muted mono">${esc(g.ta)}</span></td><td class="wrap">${g.techniques.map(t => `<span class="tag q" title="${esc(t.name)}">${esc(t.id)}</span> ${esc(t.name)} ${t.fids.map(id => `<button class="link" data-fid="${id}">#${id}</button>`).join(' ')}`).join('<br>')}</td></tr>`).join('') + `</tbody></table></div>`;
+    }
+    h += `<h2>Technical findings</h2>`;
+    h += rep.findings.map(f => `<div class="fblock"><div class="fhead"><span class="pill ${f.severity}">${f.severity}</span><span class="phase">${esc(f.phase)}</span>${f.attack ? `<span class="tag q" title="${esc(f.attack.name)}">ATT&CK ${esc(f.attack.id)}</span>` : ''}<strong>#${f.id} ${esc(f.title)}</strong></div><p>${esc(f.summary)}</p><dl class="kvlist">${f.evidence.map(ev => `<dt>${esc(ev[0])}</dt><dd class="mono">${esc(ev[1])}</dd>`).join('')}${f.attack ? `<dt>ATT&CK</dt><dd>${esc(f.attack.id)} ${esc(f.attack.name)} · ${esc(f.attack.tactic)}</dd>` : ''}</dl><p class="muted">First seen ${esc(f.firstSeen)}. ${esc(f.advice)}</p>${f.packets ? `<div><button class="link" data-fid="${f.id}">Show ${f.packets} packet(s)</button></div>` : ''}</div>`).join('') || '<p class="muted">No findings.</p>';
+    h += `<h2>Indicators of compromise</h2><h3>External IP addresses</h3><div class="scroll"><table><thead><tr><th>IP</th><th>Resolved from</th><th>Network / region</th><th class="num">Out</th><th class="num">In</th><th>Findings</th></tr></thead><tbody>${r.iocs.ips.slice(0, 40).map(x => `<tr><td class="mono">${esc(x.ip)}</td><td class="wrap mono">${esc(x.names.join(', ') || (x.resolved ? '' : 'direct-IP'))}</td><td class="wrap">${esc(x.intel ? [x.intel.net, x.intel.region].filter(v => v && v !== 'unknown').join(' · ') : '')}</td><td class="num mono">${A.fmtBytes(x.bytesOut)}</td><td class="num mono">${A.fmtBytes(x.bytesIn)}</td><td class="mono">${x.findings.map(id => '#' + id).join(' ')}</td></tr>`).join('')}</tbody></table></div>`;
+    h += `<h2>Methodology &amp; caveats</h2><ul>${rep.caveats.map(c => `<li class="muted">${esc(c)}</li>`).join('')}</ul>`;
+    if (rep.evidence) { const ev = rep.evidence; h += `<h2>Evidence &amp; chain of custody</h2><dl class="kvlist"><dt>Tool</dt><dd>${esc(ev.tool)}</dd><dt>Generated</dt><dd>${esc(rep.generated)}</dd>${ev.config ? `<dt>Configuration</dt><dd>sensitivity ${esc(ev.config.sensitivity)} · ${ev.config.disabledDetectors} detector(s) disabled · ${(ev.config.watchlist.ips.length + ev.config.watchlist.domains.length + ev.config.watchlist.hashes.length)} watchlist indicator(s)</dd>` : ''}</dl><div class="scroll"><table><thead><tr><th>Source file</th><th class="num">Packets</th><th class="num">Size</th><th>SHA-256</th></tr></thead><tbody>${ev.sources.map(s => `<tr><td class="wrap mono">${esc(s.name)}</td><td class="num mono">${fmtN(s.packets)}</td><td class="num mono">${A.fmtBytes(s.bytes)}</td><td class="wrap mono">${esc(s.sha256 || '—')}</td></tr>`).join('')}</tbody></table></div>`; }
+    $('reportBody').innerHTML = h;
+  }
+  $('reportBody').addEventListener('click', e => { const b = e.target.closest('button[data-fid]'); if (b) { const f = state.result.findings.find(x => x.id === +b.dataset.fid); if (f) setFilter(filterForFinding(f)); } });
+  function reportHtml(rep) {
+    const row = cells => '<tr>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>';
+    const e = rep.exec;
+    const style = 'body{font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;color:#161e26}h1{font-size:22px}h2{font-size:17px;border-top:1px solid #ccc;padding-top:12px;margin-top:24px}h3{font-size:14px}table{border-collapse:collapse;width:100%;font-size:12.5px;margin:8px 0}th,td{border:1px solid #ddd;padding:5px 8px;text-align:left;vertical-align:top}th{background:#f2f4f6}.sev-high{color:#b42828;font-weight:700}.sev-medium{color:#a8650a;font-weight:700}.sev-low{color:#2a5fa8}.assess{background:#f2f4f6;border-left:4px solid #b42828;padding:10px 12px}code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace}.muted{color:#5a6977}@media print{h2{break-before:auto}}';
+    const sevc = s => `<span class="sev-${s}">${s.toUpperCase()}</span>`;
+    const an = rep.analyst || {}; const tlpBanner = an.tlp ? `<div style="font-weight:800;border:1px solid #b08;padding:4px 8px;display:inline-block;border-radius:4px;margin-bottom:8px">${esc(an.tlp)}</div><br>` : '';
+    let b = tlpBanner + `<h1>${esc(rep.title)}</h1><p class="muted">${[an.name && 'Analyst: ' + esc(an.name), an.org && esc(an.org), an.case && 'Case: ' + esc(an.case)].filter(Boolean).join(' &middot; ')}${(an.name || an.org || an.case) ? '<br>' : ''}Generated ${esc(rep.generated)} by FluxHunt · ${rep.sources.length} capture file(s)</p>`;
+    b += `<h2>1. Executive summary</h2><div class="assess">${esc(e.postureText)}</div><ul>`;
+    b += `<li><b>Headline:</b> ${esc(e.headline)}</li><li><b>Findings:</b> ${['high', 'medium', 'low', 'info'].filter(k => e.counts[k]).map(k => e.counts[k] + ' ' + k).join(', ') || 'none'}</li><li><b>Affected internal hosts:</b> ${e.affectedAssets}</li>`;
+    if (e.c2Endpoints.length) b += `<li><b>Endpoints in findings:</b> <span class="mono">${esc(e.c2Endpoints.slice(0, 12).join(', '))}</span></li>`;
+    b += `<li><b>Capture window:</b> <span class="mono">${esc(fmtTs(rep.scope.start))} → ${esc(fmtTs(rep.scope.end))}</span> (${fmtDur(rep.scope.duration)})</li>`;
+    b += `<li><b>Scope:</b> ${fmtN(rep.scope.packets)} packets, ${A.fmtBytes(rep.scope.bytes)}, ${rep.scope.hosts} hosts, ${fmtN(rep.scope.sessions)} sessions</li></ul>`;
+    if (rep.recommendations.length) b += `<h3>Immediate recommended actions</h3><ol>${rep.recommendations.map(x => `<li>(${sevc(x.severity)}, ${esc(x.phase)}) ${esc(x.text)}</li>`).join('')}</ol>`;
+    if (rep.narrative.length) b += `<h2>2. Probable attack narrative</h2><ul>${rep.narrative.map(n => `<li><span class="mono">${esc(n.at)}</span> · <b>${esc(n.phase)}</b> (${sevc(n.severity)}) — ${esc(n.title)} [#${n.id}]</li>`).join('')}</ul>`;
+    b += `<h2>3. Incident timeline</h2><table><tr><th>Time</th><th>Phase</th><th>Sev</th><th>Finding</th><th>Hosts</th></tr>${rep.timeline.map(t => row([`<span class="mono">${esc(t.at)}</span>`, esc(t.phase), sevc(t.severity), esc(t.title), `<span class="mono">${esc(t.hosts.slice(0, 3).join(', '))}</span>`])).join('') || row(['—', '—', '—', 'No actionable findings', '—'])}</table>`;
+    b += `<h2>4. Affected assets</h2>` + (rep.assets.length ? `<table><tr><th>Host</th><th>Worst</th><th>First</th><th>Phases</th><th>Findings</th></tr>${rep.assets.map(a => row([`<span class="mono">${esc(a.ip)}</span>`, sevc(a.worst), `<span class="mono">${esc(fmtOffsetUI(a.first - rep.scope.start))}</span>`, esc(a.phases.join(', ')), a.findings.map(id => '#' + id).join(' ')])).join('')}</table>` : '<p class="muted">No internal hosts implicated.</p>');
+    if (rep.attackCoverage && rep.attackCoverage.length) b += `<h2>5. MITRE ATT&amp;CK coverage</h2><table><tr><th>Tactic</th><th>Techniques observed</th></tr>${rep.attackCoverage.map(g => row([esc(g.tactic) + ' <span class="mono">' + esc(g.ta) + '</span>', g.techniques.map(t => '<b>' + esc(t.id) + '</b> ' + esc(t.name) + ' [' + t.fids.map(id => '#' + id).join(' ') + ']').join('<br>')])).join('')}</table>`;
+    b += `<h2>6. Technical findings</h2>` + rep.findings.map(f => `<h3>#${f.id} — ${esc(f.title)} (${sevc(f.severity)} · ${esc(f.phase)}${f.attack ? ' · ' + esc(f.attack.id) : ''})</h3><p>First seen <span class="mono">${esc(f.firstSeen)}</span>. ${esc(f.summary)}</p><table>${f.evidence.map(ev => row([esc(ev[0]), `<span class="mono">${esc(ev[1])}</span>`])).join('')}${f.attack ? row(['ATT&CK', esc(f.attack.id) + ' ' + esc(f.attack.name) + ' (' + esc(f.attack.tactic) + ')']) : ''}</table><p class="muted"><i>Recommended:</i> ${esc(f.advice)}</p>`).join('');
+    b += `<h2>7. Indicators of compromise</h2><h3>External IP addresses</h3><table><tr><th>IP</th><th>Resolved from</th><th>Network / region</th><th>Out</th><th>In</th><th>Findings</th></tr>${rep.iocs.ips.slice(0, 50).map(x => row([`<span class="mono">${esc(x.ip)}</span>`, esc(x.names.join(', ') || (x.resolved ? '' : 'direct-IP')), esc(x.intel ? [x.intel.net, x.intel.region].filter(v => v && v !== 'unknown').join(' · ') : ''), A.fmtBytes(x.bytesOut), A.fmtBytes(x.bytesIn), x.findings.map(id => '#' + id).join(' ')])).join('')}</table>`;
+    if (rep.iocs.domains.length) b += `<h3>Domains</h3><table><tr><th>Domain</th><th>Queries</th><th>Clients</th><th>Resolved IPs</th><th>Flagged</th></tr>${rep.iocs.domains.slice(0, 50).map(d => row([`<span class="mono">${esc(d.domain)}</span>`, d.queries, d.clients, `<span class="mono">${esc(d.ips.join(', '))}</span>`, d.flagged ? 'yes' : ''])).join('')}</table>`;
+    b += `<h2>8. Methodology &amp; caveats</h2><ul>${rep.caveats.map(c => `<li class="muted">${esc(c)}</li>`).join('')}</ul>`;
+    if (rep.evidence) b += `<h2>9. Evidence &amp; chain of custody</h2><p class="muted">Tool: ${esc(rep.evidence.tool)} · Generated ${esc(rep.generated)}</p><table><tr><th>Source file</th><th>Packets</th><th>Size</th><th>SHA-256</th></tr>${rep.evidence.sources.map(s => row([esc(s.name), s.packets, A.fmtBytes(s.bytes), `<span class="mono">${esc(s.sha256 || '—')}</span>`])).join('')}</table>`;
+    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(rep.title) + '</title><style>' + style + '</style></head><body>' + b + '</body></html>';
+  }
+  function ensureReport() { if (!state.result) { toast('Load a capture first'); return null; } return state.report || (state.report = A.buildReport(state.result, reportMeta())); }
+  $('repMd').addEventListener('click', () => { const rep = ensureReport(); if (rep) copy(A.reportMarkdown(rep), 'Markdown report'); });
+  $('repHtml').addEventListener('click', () => { const rep = ensureReport(); if (rep) copy(reportHtml(rep), 'HTML report'); });
+  $('repDl').addEventListener('click', () => { const rep = ensureReport(); if (!rep) return; try { const blob = new Blob([reportHtml(rep)], { type: 'text/html' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = (settings.analyst && settings.analyst.case ? settings.analyst.case + '-' : '') + 'fluxhunt-report.html'; document.body.appendChild(a); a.click(); setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 100); toast('Report downloaded'); } catch (e) { toast('Download blocked here — use Copy as HTML'); } });
+  $('repPrint').addEventListener('click', () => { if (!ensureReport()) return; showView('report'); setTimeout(() => { try { window.print(); } catch (e) { toast('Printing is unavailable in this view; use Download HTML then print'); } }, 60); });
+
+  // ---------------- attack map (force-directed) + infographics
+  const ROLE_COLOR = { c2: '--high', flagged: '--medium', suspect: '--medium', internal: '--accent', external: '--muted' };
+  let graphState = null, graphRAF = 0;
+  function renderGraphView() {
+    const r = state.result; if (!r) return;
+    // kill-chain strip from the report narrative
+    const rep = state.report || A.buildReport(r, {});
+    const phaseColor = { 'Reconnaissance': '--low', 'Defense evasion': '--medium', 'Credential access': '--medium', 'Credential exposure': '--medium', 'Command & control': '--high', 'Command & control (covert)': '--high', 'C2 infrastructure': '--high', 'Lateral movement': '--medium', 'Exfiltration': '--high', 'Impact': '--high', 'Collection / man-in-the-middle': '--medium' };
+    $('killchain').innerHTML = rep.narrative.length ? rep.narrative.map(n => `<div class="kc-step"><span class="kc-dot" style="background:var(${phaseColor[n.phase] || '--muted'})"></span><div class="kc-body"><div class="kc-phase">${esc(n.phase)} <span class="muted">${esc(n.at)}</span></div><div class="kc-detail"><button class="link" data-fid="${n.id}">${esc(n.title)}</button></div></div>`).join('') : '<div class="kc-empty">No multi-stage attack chain reconstructed. Individual findings are in the Findings tab.</div>';
+    drawDonut();
+    initGraph();
+  }
+  function cssvar(k) { return getComputedStyle(document.documentElement).getPropertyValue(k).trim() || '#888'; }
+  function initGraph() {
+    const r = state.result, g = r.graph; const canvas = $('graph');
+    const W = canvas.clientWidth || 600, H = 460;
+    const nodes = g.nodes.map((n, i) => ({ ...n, x: W / 2 + Math.cos(i) * (80 + i * 3) + (Math.random() - .5) * 40, y: H / 2 + Math.sin(i) * (60 + i * 2) + (Math.random() - .5) * 40, vx: 0, vy: 0, r: Math.max(4, Math.min(20, 4 + Math.log2(1 + n.bytes / 2048))) }));
+    const index = new Map(nodes.map(n => [n.ip, n]));
+    const edges = g.edges.map(e => ({ a: index.get(e.a), b: index.get(e.b), bad: e.bad, bytes: e.bytes })).filter(e => e.a && e.b);
+    graphState = { nodes, edges, index, W, H, zoom: 1, ox: 0, oy: 0, drag: null, hover: null, alpha: 1 };
+    legendGraph();
+    runGraph();
+    bindGraph();
+  }
+  function legendGraph() {
+    const items = [['c2', 'External C2 / exfil'], ['flagged', 'Internal, in a finding'], ['suspect', 'Flagged external'], ['internal', 'Internal host'], ['external', 'External host']];
+    $('glegend').innerHTML = items.map(([k, l]) => `<span><i style="background:var(${ROLE_COLOR[k]})"></i>${esc(l)}</span>`).join('');
+  }
+  function runGraph() {
+    cancelAnimationFrame(graphRAF);
+    const gs = graphState; if (!gs) return;
+    let ticks = 0;
+    const step = () => {
+      const { nodes, edges } = gs;
+      // repulsion
+      for (let i = 0; i < nodes.length; i++) { const a = nodes[i]; for (let j = i + 1; j < nodes.length; j++) { const b = nodes[j]; let dx = a.x - b.x, dy = a.y - b.y; let d2 = dx * dx + dy * dy || 1; const f = 900 / d2; const d = Math.sqrt(d2); dx /= d; dy /= d; a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f; } }
+      // springs
+      for (const e of edges) { let dx = e.b.x - e.a.x, dy = e.b.y - e.a.y; const d = Math.sqrt(dx * dx + dy * dy) || 1; const f = (d - 70) * 0.01; dx /= d; dy /= d; e.a.vx += dx * f; e.a.vy += dy * f; e.b.vx -= dx * f; e.b.vy -= dy * f; }
+      // centering + integrate
+      for (const n of nodes) { if (n === (gs.drag && gs.drag.node)) continue; n.vx += (gs.W / 2 - n.x) * 0.002; n.vy += (gs.H / 2 - n.y) * 0.002; n.vx *= 0.85; n.vy *= 0.85; n.x += n.vx; n.y += n.vy; }
+      drawGraph();
+      if (++ticks < 400 && !gs.drag) graphRAF = requestAnimationFrame(step);
+    };
+    step();
+  }
+  function drawGraph() {
+    const gs = graphState; if (!gs) return; const canvas = $('graph'); const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth || 600, H = 460; if (gs.W !== W) gs.W = W; gs.H = H;
+    canvas.width = W * dpr; canvas.height = H * dpr; const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H); g.save(); g.translate(gs.ox, gs.oy); g.scale(gs.zoom, gs.zoom);
+    const line = cssvar('--line'), bad = cssvar('--high');
+    for (const e of gs.edges) { g.strokeStyle = e.bad ? bad : line; g.globalAlpha = e.bad ? 0.5 : 0.25; g.lineWidth = e.bad ? 1.4 : 0.7; g.beginPath(); g.moveTo(e.a.x, e.a.y); g.lineTo(e.b.x, e.b.y); g.stroke(); }
+    g.globalAlpha = 1;
+    for (const n of gs.nodes) {
+      g.beginPath(); g.arc(n.x, n.y, n.r, 0, 6.2832); g.fillStyle = cssvar(ROLE_COLOR[n.role]); g.fill();
+      if (n.sev === 'high' || n.role === 'c2') { g.lineWidth = 2; g.strokeStyle = cssvar('--high'); g.stroke(); }
+      else if (!n.internal) { g.lineWidth = 1; g.strokeStyle = line; g.stroke(); }
+    }
+    if (gs.hover) { const n = gs.hover; g.beginPath(); g.arc(n.x, n.y, n.r + 3, 0, 6.2832); g.strokeStyle = cssvar('--fg'); g.lineWidth = 1.5; g.stroke(); }
+    g.restore();
+  }
+  function graphPt(ev) { const canvas = $('graph'); const rect = canvas.getBoundingClientRect(); const gs = graphState; const x = (ev.clientX - rect.left - gs.ox) / gs.zoom, y = (ev.clientY - rect.top - gs.oy) / gs.zoom; return { x, y, cx: ev.clientX - rect.left, cy: ev.clientY - rect.top }; }
+  function nodeAt(x, y) { const gs = graphState; for (let i = gs.nodes.length - 1; i >= 0; i--) { const n = gs.nodes[i]; if ((n.x - x) ** 2 + (n.y - y) ** 2 <= (n.r + 3) ** 2) return n; } return null; }
+  function bindGraph() {
+    const canvas = $('graph'); if (canvas._bound) return; canvas._bound = true;
+    canvas.addEventListener('pointerdown', ev => { const gs = graphState; if (!gs) return; const p = graphPt(ev); const n = nodeAt(p.x, p.y); canvas.setPointerCapture(ev.pointerId); if (n) gs.drag = { node: n, moved: false }; else gs.drag = { pan: true, x: ev.clientX, y: ev.clientY, moved: false }; });
+    canvas.addEventListener('pointermove', ev => { const gs = graphState; if (!gs) return; const p = graphPt(ev); if (gs.drag) { gs.drag.moved = true; if (gs.drag.node) { gs.drag.node.x = p.x; gs.drag.node.y = p.y; gs.drag.node.vx = gs.drag.node.vy = 0; drawGraph(); } else { gs.ox += ev.clientX - gs.drag.x; gs.oy += ev.clientY - gs.drag.y; gs.drag.x = ev.clientX; gs.drag.y = ev.clientY; drawGraph(); } return; } const n = nodeAt(p.x, p.y); gs.hover = n; const tip = $('gtip'); if (n) { tip.hidden = false; tip.innerHTML = `<b>${esc(n.ip)}</b>${n.cats.length ? '<br>' + esc(n.cats.join(', ')) : ''}<br>${A.fmtBytes(n.bytes)} · ${fmtN(n.pkts)} pkts${n.fids.length ? '<br>findings ' + n.fids.map(x => '#' + x).join(' ') : ''}`; const tx = Math.min(p.cx + 12, gs.W - 180), ty = Math.min(p.cy + 12, 420); tip.style.left = Math.max(4, tx) + 'px'; tip.style.top = ty + 'px'; canvas.style.cursor = 'pointer'; } else { tip.hidden = true; canvas.style.cursor = 'grab'; } drawGraph(); });
+    const end = ev => { const gs = graphState; if (!gs || !gs.drag) return; const wasNode = gs.drag.node, moved = gs.drag.moved; gs.drag = null; if (wasNode && !moved) setFilter('ip:' + wasNode.ip); };
+    canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end);
+    canvas.addEventListener('wheel', ev => { ev.preventDefault(); const gs = graphState; if (!gs) return; const p = graphPt(ev); const f = ev.deltaY < 0 ? 1.1 : 0.9; const nz = Math.max(0.3, Math.min(4, gs.zoom * f)); gs.ox = ev.clientX - $('graph').getBoundingClientRect().left - p.x * nz; gs.oy = ev.clientY - $('graph').getBoundingClientRect().top - p.y * nz; gs.zoom = nz; drawGraph(); }, { passive: false });
+  }
+  function drawDonut() {
+    const r = state.result; const cats = r.categories.slice(0, 10); const canvas = $('donut'); const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth || 300, H = 220; canvas.width = W * dpr; canvas.height = H * dpr; const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const total = cats.reduce((a, c) => a + c.n, 0) || 1; const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 10, r0 = R * 0.58;
+    const sevColor = { high: '--high', medium: '--medium', low: '--low', info: '--info' };
+    let ang = -Math.PI / 2;
+    cats.forEach(c => { const a2 = ang + (c.n / total) * 6.2832; g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, R, ang, a2); g.closePath(); g.fillStyle = cssvar(sevColor[c.sev]); g.globalAlpha = 0.55 + 0.45 * (1 - ['high', 'medium', 'low', 'info'].indexOf(c.sev) / 3); g.fill(); ang = a2; });
+    g.globalAlpha = 1; g.beginPath(); g.arc(cx, cy, r0, 0, 6.2832); g.fillStyle = cssvar('--surface'); g.fill();
+    g.fillStyle = cssvar('--fg'); g.textAlign = 'center'; g.font = '700 22px ' + cssvar('--font-ui'); g.fillText(String(r.findings.filter(f => f.severity !== 'info').length), cx, cy); g.font = '11px ' + cssvar('--font-ui'); g.fillStyle = cssvar('--muted'); g.fillText('findings', cx, cy + 16);
+    $('donutLegend').innerHTML = cats.map(c => `<span><i style="background:var(${sevColor[c.sev]})"></i>${esc(c.cat)} (${c.n})</span>`).join('');
+  }
+  let grt; window.addEventListener('resize', () => { clearTimeout(grt); grt = setTimeout(() => { if (!$('view-graph').hidden && graphState) { drawGraph(); drawDonut(); } if (!$('view-overview').hidden) drawIoGraph(); }, 150); });
+  $('graphPng').addEventListener('click', () => { const c = $('graph'); if (!c || !graphState) { toast('Open the Attack Map first'); return; } try { c.toBlob(blob => { if (blob) downloadBytes(blob, (settings.analyst && settings.analyst.case ? settings.analyst.case + '-' : '') + 'attack-map.png', 'image/png'); else toast('Export failed'); }); } catch (e) { toast('Export blocked in this view — use the downloaded standalone file'); } });
+
+  // ---------------- timeline chart
+  function drawTimeline() {
+    const c = $('timeline'); const r = state.result; if (!r) return;
+    const cs = getComputedStyle(document.documentElement);
+    const col = k => cs.getPropertyValue(k).trim();
+    const W = c.clientWidth || 600, H = 160, dpr = window.devicePixelRatio || 1;
+    c.width = W * dpr; c.height = H * dpr; const g = c.getContext('2d'); g.scale(dpr, dpr);
+    const tl = r.timeline; const padL = 44, padR = 8, padT = 10, padB = 24;
+    const iw = W - padL - padR, ih = H - padT - padB; const max = Math.max(1, ...tl.map(b => b.pkts));
+    const sev = new Array(tl.length).fill(null); const order = { high: 0, medium: 1, low: 2, info: 3 };
+    for (const f of r.findings) for (const n of f.packets) { const p = state.pkts[n - 1]; if (!p) continue; const k = Math.min(tl.length - 1, Math.floor((p.ts - r.summary.start) / r.bucket)); if (!sev[k] || order[f.severity] < order[sev[k]]) sev[k] = f.severity; }
+    g.font = '11px ' + col('--font-mono'); g.fillStyle = col('--muted'); g.strokeStyle = col('--line');
+    const ticks = 4;
+    for (let i = 0; i <= ticks; i++) { const y = padT + ih - ih * i / ticks; g.beginPath(); g.moveTo(padL, y); g.lineTo(W - padR, y); g.stroke(); g.textAlign = 'right'; g.fillText(fmtN(Math.round(max * i / ticks)), padL - 6, y + 4); }
+    const bw = iw / tl.length;
+    tl.forEach((b, i) => { const h = b.pkts / max * ih; g.fillStyle = sev[i] ? col('--' + sev[i]) : col('--accent'); g.fillRect(padL + i * bw + 0.5, padT + ih - h, Math.max(1, bw - 1), h); });
+    g.fillStyle = col('--muted'); g.textAlign = 'center';
+    const xt = Math.min(6, tl.length);
+    for (let i = 0; i <= xt; i++) { const t = r.summary.duration * i / xt; const x = padL + iw * i / xt; g.fillText('+' + fmtDur(t), Math.min(W - 30, Math.max(padL + 14, x)), H - 7); }
+  }
+  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (!$('view-overview').hidden) drawTimeline(); }, 120); });
+
+  // ---------------- packet table
+  function parseFilter(q) {
+    return q.trim().split(/\s+/).filter(Boolean).map(tok => {
+      let neg = false; if (tok.startsWith('!')) { neg = true; tok = tok.slice(1); }
+      const m = /^(ip|src|dst|port|proto|n):(.+)$/i.exec(tok);
+      if (m) { const k = m[1].toLowerCase(), v = m[2].toLowerCase(); return { neg, k, v, set: k === 'n' ? new Set(v.split(',').map(Number)) : null }; }
+      return { neg, k: 'text', v: tok.toLowerCase() };
+    });
+  }
+  function matches(p, terms) {
+    for (const t of terms) {
+      let ok;
+      if (t.k === 'ip') ok = p.src.toLowerCase() === t.v || p.dst.toLowerCase() === t.v;
+      else if (t.k === 'src') ok = p.src.toLowerCase() === t.v;
+      else if (t.k === 'dst') ok = p.dst.toLowerCase() === t.v;
+      else if (t.k === 'port') { const l4 = p.tcp || p.udp; const n = +t.v; ok = !!l4 && (l4.sport === n || l4.dport === n); }
+      else if (t.k === 'proto') ok = p.proto.toLowerCase() === t.v || (p.tcp && t.v === 'tcp') || (p.udp && t.v === 'udp') || (p.ip && t.v === 'ip') || (p.icmp && t.v.startsWith('icmp'));
+      else if (t.k === 'n') ok = t.set.has(p.n);
+      else ok = (p.proto + ' ' + p.src + ' ' + p.dst + ' ' + p.info).toLowerCase().includes(t.v);
+      if (t.neg ? ok : !ok) return false;
+    }
+    return true;
+  }
+  function applyFilter() {
+    const terms = parseFilter(state.filter);
+    state.filtered = terms.length ? state.pkts.filter(p => matches(p, terms)) : state.pkts;
+    state.shown = 0;
+    $('pktTable').innerHTML = '<thead><tr><th class="num">No.</th><th class="num">Time</th><th>Source</th><th>Destination</th><th>Proto</th><th class="num">Len</th><th>Info</th></tr></thead><tbody></tbody>';
+    renderMore();
+    updateFilterBanner();
+  }
+  function updateFilterBanner() {
+    const b = $('filterBanner'); if (!state.result || !state.filter) { b.hidden = true; return; }
+    b.hidden = false; b.innerHTML = `<span>Active packet filter</span> <span class="mono">${esc(state.filter)}</span> <span class="muted">· ${fmtN(state.filtered.length)} packet(s)</span><button class="btn small" id="clearFilterBanner" type="button">Clear filter</button>`;
+  }
+  $('filterBanner').addEventListener('click', e => { if (e.target.id === 'clearFilterBanner') setFilter(''); });
+  function renderMore() {
+    const tb = $('pktTable').querySelector('tbody'); const start = state.shown, end = Math.min(state.filtered.length, start + 150);
+    const t0 = state.result.summary.start; let html = '';
+    for (let i = start; i < end; i++) { const p = state.filtered[i]; const sv = state.sevOf.get(p.n) || ''; html += `<tr class="${sv}" data-n="${p.n}" tabindex="0"><td class="num mono">${p.n}</td><td class="num mono">${(p.ts - t0).toFixed(4)}</td><td class="mono">${esc(p.src)}</td><td class="mono">${esc(p.dst)}</td><td>${esc(p.proto)}</td><td class="num mono">${p.len}</td><td class="info">${esc(p.info)}</td></tr>`; }
+    tb.insertAdjacentHTML('beforeend', html); state.shown = end;
+    const left = state.filtered.length - end;
+    $('pktMore').innerHTML = state.filtered.length ? `<div class="filterbar"><span class="hint" style="flex-basis:auto">Showing ${fmtN(end)} of ${fmtN(state.filtered.length)} matching packets.</span>${left > 0 ? '<button type="button" class="btn small" id="moreBtn">Show ' + fmtN(Math.min(150, left)) + ' more</button>' : ''}</div>` : '<div class="none">No packets match this filter.</div>';
+  }
+  $('pktMore').addEventListener('click', e => { if (e.target.id === 'moreBtn') renderMore(); });
+  let ft; $('filter').addEventListener('input', e => { clearTimeout(ft); ft = setTimeout(() => { state.filter = e.target.value; applyFilter(); }, 200); });
+  $('clearFilter').addEventListener('click', () => setFilter(''));
+  function exportSelectedPcap(anon) { if (!state.capture) { toast('Load a capture first'); return; } const nSet = state.filter ? new Set(state.filtered.map(p => p.n)) : null; const bytes = A.exportPcap(state.capture, nSet, { anonymize: anon }); if (!bytes.length) { toast('No packets to export'); return; } const base = (settings.analyst && settings.analyst.case ? settings.analyst.case + '-' : '') + 'fluxhunt' + (state.filter ? '-filtered' : '') + (anon ? '-anonymized' : ''); downloadBytes(bytes, base + '.pcap', 'application/vnd.tcpdump.pcap'); }
+  $('pcapOut').addEventListener('click', () => exportSelectedPcap(false));
+  $('pcapAnon').addEventListener('click', () => exportSelectedPcap(true));
+  $('pktCsv').addEventListener('click', () => { if (!state.result) { toast('Load a capture first'); return; } const t0 = state.result.summary.start; const head = ['no', 'time_rel_s', 'src', 'dst', 'proto', 'length', 'info']; const rows = state.filtered.slice(0, 100000).map(p => [p.n, (p.ts - t0).toFixed(4), p.src, p.dst, p.proto, p.len, p.info]); copy(toCsv(head, rows), fmtN(rows.length) + ' packets (CSV)'); });
+  $('pktTable').addEventListener('click', e => { const tr = e.target.closest('tr[data-n]'); if (tr) toggleDetail(tr); });
+  $('pktTable').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { const tr = e.target.closest('tr[data-n]'); if (tr) { e.preventDefault(); toggleDetail(tr); } } });
+  function toggleDetail(tr) {
+    const next = tr.nextElementSibling;
+    if (next && next.classList.contains('detail')) { next.remove(); return; }
+    const p = state.pkts[+tr.dataset.n - 1]; const raw = state.capture.packets[p.n - 1].data;
+    const kv = [];
+    if (p.eth) kv.push(['Ethernet', p.eth.src + ' → ' + p.eth.dst + (p.vlan ? ' · VLAN ' + p.vlan : '')]);
+    if (p.ip) kv.push(['IPv' + p.ip.v, p.src + ' → ' + p.dst + ' · TTL ' + p.ip.ttl + (p.ip.v === 4 ? ' · id ' + p.ip.id + (p.ip.df ? ' · DF' : '') + (p.ip.mf ? ' · MF' : '') : '')]);
+    if (p.tcp) kv.push(['TCP', p.tcp.sport + ' → ' + p.tcp.dport + ' · flags ' + A.flagStr(p.tcp.flags) + ' · seq ' + p.tcp.seq + ' · ack ' + p.tcp.ack + ' · win ' + p.tcp.win + ' · payload ' + p.tcp.payloadLen + ' B']);
+    if (p.udp) kv.push(['UDP', p.udp.sport + ' → ' + p.udp.dport + ' · payload ' + p.udp.payloadLen + ' B']);
+    if (p.icmp) kv.push([p.proto, 'type ' + p.icmp.type + ' code ' + p.icmp.code + ' · data ' + p.icmp.dataLen + ' B']);
+    if (p.arp) kv.push(['ARP', 'op ' + p.arp.op + ' · ' + p.arp.sha + ' / ' + p.arp.spa + ' → ' + p.arp.tha + ' / ' + p.arp.tpa]);
+    if (p.dns) kv.push(['DNS', 'id ' + p.dns.id + ' · ' + (p.dns.qr ? 'response rcode ' + p.dns.rcode : 'query') + ' · ' + p.dns.questions.map(q => q.name).join(', ') + (p.dns.answers.length ? ' · answers: ' + p.dns.answers.map(a => a.data || ('type ' + a.type)).join(', ') : '')]);
+    if (p.http) kv.push(['HTTP', p.http.response ? p.http.line : p.http.method + ' ' + p.http.path + (p.http.host ? ' · Host ' + p.http.host : '') + (p.http.ua ? ' · UA ' + p.http.ua : '') + (p.http.auth ? ' · Authorization present' : '')]);
+    if (p.tls) kv.push(['TLS', (p.tls.clientHello ? 'Client Hello' : 'Server Hello') + (p.tls.sni ? ' · SNI ' + p.tls.sni : '') + (p.tls.ja3 ? ' · JA3 ' + p.tls.ja3 : '') + (p.tls.ja4 ? ' · JA4 ' + p.tls.ja4 : '')]);
+    if (p.tunnel) kv.push([p.tunnel.type, 'inner ' + p.tunnel.innerSrc + ' → ' + p.tunnel.innerDst + ' · ' + p.tunnel.innerProto + (p.tunnel.vni != null ? ' · VNI ' + p.tunnel.vni : '')]);
+    const findings = state.result.findings.filter(f => f.packets.includes(p.n));
+    if (findings.length) kv.push(['Findings', findings.map(f => '#' + f.id + ' ' + f.title + (f.attack ? ' [' + f.attack.id + ']' : '')).join('; ')]);
+    let hex = '';
+    const n = Math.min(raw.length, 160);
+    for (let i = 0; i < n; i += 16) { let h = '', a = ''; for (let j = i; j < Math.min(n, i + 16); j++) { h += raw[j].toString(16).padStart(2, '0') + (j % 8 === 7 ? '  ' : ' '); const c = raw[j]; a += c >= 32 && c < 127 ? String.fromCharCode(c) : '.'; } hex += i.toString(16).padStart(4, '0') + '  ' + h.padEnd(50) + ' ' + a + '\n'; }
+    if (raw.length > n) hex += '… ' + (raw.length - n) + ' more bytes';
+    const d = document.createElement('tr'); d.className = 'detail';
+    d.innerHTML = `<td colspan="7"><div class="kv">${kv.map(x => `<div><span>${esc(x[0])}</span> ${esc(x[1])}</div>`).join('')}</div><pre>${esc(hex)}</pre></td>`;
+    tr.after(d);
+  }
+
+  // ---------------- export
+  function copy(text, label) {
+    const done = () => toast(label + ' copied');
+    const fallback = () => { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); done(); } catch (e) { toast('Select and copy manually'); } ta.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback); else fallback();
+  }
+  $('copyJson').addEventListener('click', () => {
+    if (!state.result) { toast('Load a capture first'); return; }
+    const r = state.result;
+    const out = { capture: state.name, generated: new Date().toISOString(), analyst: settings.analyst, summary: r.summary, severity: r.severity, thresholds: r.thresholds, findings: r.findings.map(f => ({ id: f.id, severity: f.severity, category: f.category, attack: f.attack, title: f.title, summary: f.summary, hosts: f.hosts, evidence: Object.fromEntries(f.evidence), advice: f.advice, packets: f.packets.slice(0, 100) })), protocols: Object.fromEntries(r.protocols), indicators: { ips: r.iocs.ips.slice(0, 500), domains: r.iocs.domains.slice(0, 500) }, artifacts: r.artifacts, topTalkers: r.topTalkers.map(h => ({ ip: h.ip, packets: h.pkts, bytesOut: h.bytesOut, bytesIn: h.bytesIn })) };
+    copy(JSON.stringify(out, null, 2), 'JSON report');
+  });
+  $('copyText').addEventListener('click', () => {
+    if (!state.result) { toast('Load a capture first'); return; }
+    const r = state.result;
+    const lines = ['FluxHunt report — ' + state.name, fmtN(r.summary.packets) + ' packets, ' + A.fmtBytes(r.summary.bytes) + ', ' + fmtDur(r.summary.duration) + ', ' + r.summary.hosts + ' hosts', ''];
+    for (const f of r.findings) { lines.push('[' + f.severity.toUpperCase() + '] ' + f.title); lines.push('  ' + f.summary); for (const e of f.evidence) lines.push('  - ' + e[0] + ': ' + e[1]); lines.push('  Advice: ' + f.advice); lines.push(''); }
+    if (!r.findings.length) lines.push('No anomalies detected.');
+    copy(lines.join('\n'), 'Findings');
+  });
+
+  // ---------------- settings / admin modal + workspace lock
+  function openSettings() {
+    const a = settings.analyst;
+    $('anName').value = a.name || ''; $('anOrg').value = a.org || ''; $('anCase').value = a.case || ''; $('anTlp').value = a.tlp || '';
+    $('setSens').value = settings.sensitivity || 'normal'; $('lockPass').value = '';
+    $('iocWatch').value = settings.iocText || ''; $('allowList').value = settings.allowText || ''; $('cbPalette').checked = !!settings.cbPalette; $('decodeAs').value = settings.decodeAsText || ''; $('setTheme').value = settings.theme || 'system'; $('setDensity').value = settings.density || 'comfortable';
+    $('catToggles').innerHTML = ALL_CATS.map(c => `<label><input type="checkbox" data-cat="${esc(c)}" ${settings.disabled.includes(c) ? '' : 'checked'}>${esc(c)}</label>`).join('');
+    $('settingsModal').hidden = false;
+  }
+  function closeSettings() { $('settingsModal').hidden = true; }
+  $('settingsBtn').addEventListener('click', openSettings);
+  $('setClose').addEventListener('click', closeSettings);
+  $('settingsModal').addEventListener('click', e => { if (e.target.id === 'settingsModal') closeSettings(); });
+  for (const id of ['anName', 'anOrg', 'anCase', 'anTlp']) $(id).addEventListener('input', () => { const k = { anName: 'name', anOrg: 'org', anCase: 'case', anTlp: 'tlp' }[id]; settings.analyst[k] = $(id).value; saveSettings(); if (state.result && !$('view-report').hidden) renderReport(); });
+  $('setSens').addEventListener('change', () => { settings.sensitivity = $('setSens').value; $('sens').value = settings.sensitivity; saveSettings(); reanalyze(); });
+  function applyPalette() { if (settings.cbPalette) document.documentElement.setAttribute('data-cb', '1'); else document.documentElement.removeAttribute('data-cb'); }
+  $('cbPalette').addEventListener('change', () => { settings.cbPalette = $('cbPalette').checked; saveSettings(); applyPalette(); if (!$('view-graph').hidden && graphState) { drawGraph(); drawDonut(); } if (!$('view-overview').hidden) { drawTimeline(); drawIoGraph(); } });
+  $('catToggles').addEventListener('change', e => { const cb = e.target.closest('input[data-cat]'); if (!cb) return; const c = cb.dataset.cat; settings.disabled = ALL_CATS.filter(x => { const el = $('catToggles').querySelector(`input[data-cat="${CSS.escape(x)}"]`); return el && !el.checked; }); saveSettings(); reanalyze('Applying detector settings…'); });
+  let iocT; $('iocWatch').addEventListener('input', () => { settings.iocText = $('iocWatch').value; saveSettings(); clearTimeout(iocT); iocT = setTimeout(() => reanalyze('Matching watchlist…'), 600); });
+  let alT; $('allowList').addEventListener('input', () => { settings.allowText = $('allowList').value; saveSettings(); clearTimeout(alT); alT = setTimeout(() => reanalyze('Applying allowlist…'), 600); });
+  let daT; $('decodeAs').addEventListener('input', () => { settings.decodeAsText = $('decodeAs').value; saveSettings(); clearTimeout(daT); daT = setTimeout(() => { if (!state.capture) return; status('Re-decoding with decode-as…', true); setTimeout(() => { A.setDecodeAs(parseDecodeAs(settings.decodeAsText)); state.pkts = state.capture.packets.map((rp, i) => A.decodePacket(rp, i)); render._keep = true; state.result = A.analyze(state.pkts, state.capture, analyzeOpts()); state.sevFilter = 'all'; render(); status('Re-decoded with decode-as overrides.'); }, 0); }, 700); });
+  $('lockSave').addEventListener('click', async () => { const p = $('lockPass').value; settings.lock = p ? await hashPass(p) : null; saveSettings(); toast(p ? 'Workspace lock set' : 'Workspace lock cleared'); closeSettings(); });
+  async function tryUnlock() { const v = $('lockInput').value; if (await hashPass(v) === settings.lock) { $('lockModal').hidden = true; if (!state.result) loadDemo(); } else { $('lockErr').hidden = false; } }
+  $('lockUnlock').addEventListener('click', tryUnlock);
+  $('lockInput').addEventListener('keydown', e => { if (e.key === 'Enter') tryUnlock(); });
+
+  // ---------------- demo banner
+  function updateDemoBanner() { const synth = state.name && /synthetic/.test(state.name); $('demoBanner').hidden = !(synth && !settings.demoDismissed); }
+  $('demoOpen').addEventListener('click', () => $('file').click());
+
+  // ---------------- theme + density + help
+  function redrawVisuals() { if (!state.result) return; if (!$('view-graph').hidden && graphState) { drawGraph(); drawDonut(); } if (!$('view-overview').hidden) { drawTimeline(); drawIoGraph(); } }
+  const themeGlyph = () => settings.theme === 'light' ? '☀' : settings.theme === 'dark' ? '☾' : '◐';
+  $('themeBtn').addEventListener('click', () => { const o = ['system', 'light', 'dark']; settings.theme = o[(o.indexOf(settings.theme) + 1) % 3]; saveSettings(); applyTheme(); $('themeBtn').textContent = themeGlyph(); setTimeout(redrawVisuals, 30); });
+  function openHelp() { $('aboutLine').textContent = 'FluxHunt ' + A.VERSION + ' — a fully offline, single-file PCAP threat-hunting and incident-response tool. All analysis runs locally in your browser; nothing is uploaded.'; $('helpModal').hidden = false; }
+  $('helpBtn').addEventListener('click', openHelp);
+  $('helpClose').addEventListener('click', () => $('helpModal').hidden = true);
+  $('helpModal').addEventListener('click', e => { if (e.target.id === 'helpModal') $('helpModal').hidden = true; });
+
+  // ---------------- search palette
+  let palItems = [], palSel = 0;
+  function openPalette() { if (!state.result) { toast('Load a capture first'); return; } $('palInput').value = ''; $('palette').hidden = false; setTimeout(() => $('palInput').focus(), 30); runPalette(''); }
+  function closePalette() { $('palette').hidden = true; }
+  function runPalette(q) {
+    q = q.toLowerCase().trim(); const r = state.result; const out = [];
+    const push = (k, v, d, act) => { if (out.length < 80) out.push({ k, v, d, act }); };
+    for (const h of r.hosts) { if (q && !h.ip.includes(q)) continue; push('host', h.ip, (h.internal ? 'internal' : 'external') + ' · ' + A.fmtBytes(h.bytesOut + h.bytesIn), () => { closePalette(); hostView(h.ip); }); if (out.length >= 80) break; }
+    for (const d of r.iocs.domains) { if (q && !d.domain.toLowerCase().includes(q)) continue; push('domain', d.domain, d.queries + ' queries', () => { closePalette(); showView('iocs'); state.iocTab = 'domains'; renderIocs(); }); }
+    for (const f of r.findings) { if (q && !f.title.toLowerCase().includes(q) && !f.category.toLowerCase().includes(q)) continue; push(f.severity, f.title, f.category, () => { closePalette(); state.sevFilter = 'all'; state.catFilter = ''; renderFindings(); showView('findings'); const el = document.getElementById('f' + f.id); if (el) { el.scrollIntoView({ block: 'center' }); el.style.outline = '2px solid var(--accent)'; setTimeout(() => el.style.outline = '', 1500); } }); }
+    for (const fl of (r.artifacts.files || [])) { if (q && !fl.sha256.includes(q)) continue; push('file', fl.sha256.slice(0, 32) + '…', fl.type, () => { closePalette(); showView('iocs'); state.iocTab = 'files'; renderIocs(); }); }
+    palItems = out; palSel = 0;
+    $('palResults').innerHTML = out.length ? out.map((o, i) => `<div class="pr${i === 0 ? ' sel' : ''}" data-i="${i}"><span class="prk">${esc(o.k)}</span><span class="prv">${esc(o.v)}</span><span class="prd">${esc(o.d)}</span></div>`).join('') : '<div class="palempty">No matches.</div>';
+  }
+  let palT; $('palInput').addEventListener('input', e => { clearTimeout(palT); palT = setTimeout(() => runPalette(e.target.value), 120); });
+  $('palInput').addEventListener('keydown', e => { if (e.key === 'ArrowDown') { e.preventDefault(); palSel = Math.min(palItems.length - 1, palSel + 1); updatePalSel(); } else if (e.key === 'ArrowUp') { e.preventDefault(); palSel = Math.max(0, palSel - 1); updatePalSel(); } else if (e.key === 'Enter') { if (palItems[palSel]) palItems[palSel].act(); } else if (e.key === 'Escape') closePalette(); });
+  function updatePalSel() { [...$('palResults').children].forEach((el, i) => el.classList.toggle('sel', i === palSel)); const sel = $('palResults').children[palSel]; if (sel) sel.scrollIntoView({ block: 'nearest' }); }
+  $('palResults').addEventListener('click', e => { const pr = e.target.closest('.pr'); if (pr) palItems[+pr.dataset.i].act(); });
+  $('palette').addEventListener('click', e => { if (e.target.id === 'palette') closePalette(); });
+  $('searchBtn').addEventListener('click', openPalette);
+
+  // ---------------- case package export
+  $('casePkg').addEventListener('click', async () => {
+    const rep = ensureReport(); if (!rep) return;
+    status('Building case package…', true);
+    try {
+      const prefix = (settings.analyst && settings.analyst.case ? settings.analyst.case + '/' : 'fluxhunt-case/');
+      const files = [
+        { name: prefix + 'report.html', data: reportHtml(rep) },
+        { name: prefix + 'report.md', data: A.reportMarkdown(rep) },
+        { name: prefix + 'indicators.csv', data: A.exportIoCs(state.result, 'csv', { name: state.name }) },
+        { name: prefix + 'indicators.stix.json', data: A.exportIoCs(state.result, 'stix', { name: state.name }) },
+        { name: prefix + 'zeek-logs.txt', data: A.exportIoCs(state.result, 'zeek', { name: state.name }) },
+        { name: prefix + 'attack-navigator.json', data: A.exportIoCs(state.result, 'navigator', { name: state.name }) },
+        { name: prefix + 'findings.json', data: JSON.stringify({ capture: state.name, generated: new Date().toISOString(), analyst: settings.analyst, summary: state.result.summary, findings: state.result.findings.map(f => ({ id: f.id, severity: f.severity, category: f.category, attack: f.attack, title: f.title, summary: f.summary, hosts: f.hosts, firstSeen: f.firstTs })) }, null, 2) },
+      ];
+      if (state.capture) files.push({ name: prefix + 'capture-anonymized.pcap', data: A.exportPcap(state.capture, null, { anonymize: true }) });
+      if (!$('view-graph').hidden && graphState) { const png = await new Promise(res => $('graph').toBlob(b => res(b))); if (png) files.push({ name: prefix + 'attack-map.png', data: new Uint8Array(await png.arrayBuffer()) }); }
+      files.push({ name: prefix + 'README.txt', data: 'FluxHunt case package\nGenerated ' + new Date().toISOString() + '\nAnalyst: ' + (settings.analyst.name || '—') + '\nCase: ' + (settings.analyst.case || '—') + '\n\nContents:\n- report.html / report.md : incident-response report\n- indicators.csv / .stix.json : IOCs\n- zeek-logs.txt, attack-navigator.json, findings.json\n- capture-anonymized.pcap : sanitised capture\n- attack-map.png : topology (if generated)\n' });
+      const zip = A.makeZip(files);
+      downloadBytes(zip, (settings.analyst && settings.analyst.case ? settings.analyst.case + '-' : '') + 'fluxhunt-case-package.zip', 'application/zip');
+      status('Case package ready (' + files.length + ' files).');
+    } catch (e) { status('Could not build case package: ' + (e && e.message ? e.message : e)); }
+  });
+
+  // ---------------- keyboard shortcuts
+  let gPending = false;
+  document.addEventListener('keydown', e => {
+    const tag = (e.target.tagName || '').toLowerCase(); const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
+    if (e.key === 'Escape') { for (const id of ['palette', 'helpModal', 'hostModal', 'streamModal', 'settingsModal']) if (!$(id).hidden) { $(id).hidden = true; return; } }
+    if (typing) return;
+    if (e.key === '/') { e.preventDefault(); openPalette(); return; }
+    if (e.key === '?') { e.preventDefault(); openHelp(); return; }
+    if (e.key === 'g') { gPending = true; setTimeout(() => gPending = false, 1200); return; }
+    if (gPending) { const map = { f: 'findings', o: 'overview', a: 'graph', r: 'report', h: 'hosts', s: 'sessions', i: 'iocs', p: 'packets' }; if (map[e.key] && !$('results').hidden) { showView(map[e.key]); gPending = false; return; } gPending = false; }
+  });
+
+  // ---------------- settings: display group wiring (theme + density)
+  function applyPaletteBoot() { }
+  $('setTheme') && $('setTheme').addEventListener('change', () => { settings.theme = $('setTheme').value; saveSettings(); applyTheme(); $('themeBtn').textContent = themeGlyph(); redrawVisuals(); });
+  $('setDensity') && $('setDensity').addEventListener('change', () => { settings.density = $('setDensity').value; saveSettings(); applyTheme(); });
+
+  // ---------------- boot
+  loadSettings();
+  applyPalette(); applyTheme(); $('themeBtn').textContent = themeGlyph();
+  $('sens').value = settings.sensitivity || 'normal';
+  if (settings.lock) { $('lockModal').hidden = false; setTimeout(() => $('lockInput').focus(), 50); }
+  else loadDemo();
+})();
+</script>

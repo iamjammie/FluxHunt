@@ -1,0 +1,13 @@
+# Build output that is regenerated from source (analyzer.js + page.html)
+index.html
+
+# Packaged deliverables
+*.zip
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+node_modules/
+
+# Note: FluxHunt.html (the portable single-file app) IS committed so users can
+# download and run it directly. Regenerate it with `node build.mjs`.

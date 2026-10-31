@@ -1,0 +1,2213 @@
+/* FluxHunt — capture parser, protocol decoders and anomaly engine.
+   Pure JS, no DOM. Works in the browser and in Node (for tests). */
+const FluxHunt = (function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- helpers
+  const u16 = (b, o) => (b[o] << 8) | b[o + 1];
+  const u32 = (b, o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+  function ascii(b, s, e) {
+    let r = '';
+    for (let i = s; i < e && i < b.length; i++) {
+      const c = b[i];
+      r += (c >= 32 && c < 127) ? String.fromCharCode(c) : (c === 10 ? '\n' : c === 13 ? '' : '.');
+    }
+    return r;
+  }
+  const ip4 = (b, o) => b[o] + '.' + b[o + 1] + '.' + b[o + 2] + '.' + b[o + 3];
+  function ip6(b, o) {
+    const parts = [];
+    for (let i = 0; i < 8; i++) parts.push(u16(b, o + 2 * i).toString(16));
+    let best = -1, bestLen = 0, cur = -1, curLen = 0;
+    for (let i = 0; i < 8; i++) {
+      if (parts[i] === '0') { if (cur < 0) { cur = i; curLen = 1; } else curLen++; if (curLen > bestLen) { best = cur; bestLen = curLen; } }
+      else { cur = -1; curLen = 0; }
+    }
+    if (bestLen > 1) return parts.slice(0, best).join(':') + '::' + parts.slice(best + bestLen).join(':');
+    return parts.join(':');
+  }
+  function mac(b, o) {
+    let s = '';
+    for (let i = 0; i < 6; i++) s += (i ? ':' : '') + b[o + i].toString(16).padStart(2, '0');
+    return s;
+  }
+  function isPrivate(ip) {
+    if (!ip) return true;
+    if (ip.includes(':')) {
+      const l = ip.toLowerCase();
+      return l.startsWith('fe80') || l.startsWith('fc') || l.startsWith('fd') || l === '::1' || l === '::' || l.startsWith('ff');
+    }
+    const a = ip.split('.').map(Number);
+    return a[0] === 10 || (a[0] === 172 && a[1] >= 16 && a[1] <= 31) || (a[0] === 192 && a[1] === 168) ||
+      a[0] === 127 || (a[0] === 169 && a[1] === 254) || (a[0] === 100 && a[1] >= 64 && a[1] <= 127) ||
+      a[0] >= 224 || a[0] === 0 || ip === '255.255.255.255';
+  }
+  // ---- offline IP enrichment: coarse RIR region (from IANA /8 allocations) + a best-effort list of
+  //      well-known network owners. This is NOT live geolocation/ASN; it is an approximate, built-in hint.
+  const RIR_REGION = { ARIN: 'North America', RIPE: 'Europe / Middle East', APNIC: 'Asia-Pacific', LACNIC: 'Latin America', AFRINIC: 'Africa', '': 'unknown' };
+  function rirForOctet(o) {
+    if (o === 51 || o === 2 || o === 5 || o === 25 || o === 31 || (o >= 46 && o <= 95 && o !== 50) || (o >= 176 && o <= 195 && o !== 177 && o !== 179 && o !== 181 && o !== 186 && o !== 187 && o !== 188 && o !== 189 && o !== 190 && o !== 191) || o === 212 || o === 213 || o === 217 || o === 141 || o === 145 || o === 151 || o === 185 || o === 193 || o === 194 || o === 195) return 'RIPE';
+    if ((o >= 36 && o <= 43) || (o >= 58 && o <= 61) || (o >= 110 && o <= 126) || (o >= 202 && o <= 203) || (o >= 210 && o <= 211) || (o >= 218 && o <= 223) || o === 1 || o === 14 || o === 27 || o === 49 || o === 101 || o === 103 || o === 106 || o === 115 || o === 116 || o === 117 || o === 118 || o === 119 || o === 120 || o === 121 || o === 122 || o === 123 || o === 124 || o === 125 || o === 175 || o === 180 || o === 182 || o === 183) return 'APNIC';
+    if (o === 177 || o === 179 || o === 181 || o === 186 || o === 187 || o === 189 || o === 190 || o === 191 || o === 200 || o === 201) return 'LACNIC';
+    if (o === 41 || o === 102 || o === 105 || o === 154 || o === 196 || o === 197) return 'AFRINIC';
+    if ((o >= 3 && o <= 76) || (o >= 96 && o <= 100) || (o >= 104 && o <= 109) || (o >= 128 && o <= 174) || o === 199 || o === 204 || o === 205 || o === 206 || o === 207 || o === 208 || o === 209 || o === 214 || o === 215 || o === 216) return 'ARIN';
+    return '';
+  }
+  const KNOWN_NETS = [
+    ['8.8.8.0/24', 'Google Public DNS'], ['8.8.4.0/24', 'Google Public DNS'], ['8.34.208.0/20', 'Google'], ['34.0.0.0/9', 'Google Cloud'], ['35.184.0.0/13', 'Google Cloud'], ['142.250.0.0/15', 'Google'], ['172.217.0.0/16', 'Google'], ['216.58.192.0/19', 'Google'],
+    ['1.1.1.0/24', 'Cloudflare DNS'], ['1.0.0.0/24', 'Cloudflare DNS'], ['104.16.0.0/13', 'Cloudflare'], ['172.64.0.0/13', 'Cloudflare'], ['162.158.0.0/15', 'Cloudflare'], ['198.41.128.0/17', 'Cloudflare'],
+    ['52.0.0.0/8', 'Amazon AWS'], ['54.0.0.0/8', 'Amazon AWS'], ['3.0.0.0/9', 'Amazon AWS'], ['13.32.0.0/15', 'Amazon CloudFront'], ['99.84.0.0/16', 'Amazon CloudFront'], ['18.64.0.0/10', 'Amazon CloudFront'],
+    ['20.0.0.0/8', 'Microsoft Azure'], ['40.64.0.0/10', 'Microsoft Azure'], ['13.64.0.0/11', 'Microsoft Azure'], ['104.40.0.0/13', 'Microsoft Azure'], ['23.192.0.0/11', 'Akamai'], ['104.64.0.0/10', 'Akamai'], ['151.101.0.0/16', 'Fastly'],
+    ['9.9.9.0/24', 'Quad9 DNS'], ['208.67.222.0/24', 'OpenDNS'], ['140.82.112.0/20', 'GitHub'], ['185.199.108.0/22', 'GitHub Pages'], ['208.80.152.0/22', 'Wikimedia'], ['157.240.0.0/16', 'Meta/Facebook'], ['31.13.24.0/21', 'Meta/Facebook'],
+  ];
+  function ipToInt(ip) { const a = ip.split('.').map(Number); return ((a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3]) >>> 0; }
+  const KNOWN_NET_PARSED = KNOWN_NETS.map(([cidr, owner]) => { const [b, bits] = cidr.split('/'); const mask = bits === '0' ? 0 : (0xffffffff << (32 - +bits)) >>> 0; return { base: (ipToInt(b) & mask) >>> 0, mask, bits: +bits, owner }; }).sort((a, b) => b.bits - a.bits);
+  function ipIntel(ip) {
+    if (!ip || ip.includes(':') || isPrivate(ip)) return null;
+    const v = ipToInt(ip); let net = null;
+    for (const k of KNOWN_NET_PARSED) if ((v & k.mask) >>> 0 === k.base) { net = k.owner; break; }
+    const rir = rirForOctet(+ip.split('.')[0]);
+    return { rir, region: RIR_REGION[rir], net };
+  }
+  function entropy(s) {
+    if (!s.length) return 0;
+    const f = new Map();
+    for (const c of s) f.set(c, (f.get(c) || 0) + 1);
+    let h = 0;
+    for (const n of f.values()) { const p = n / s.length; h -= p * Math.log2(p); }
+    return h;
+  }
+  const SLD = new Set(['co', 'com', 'org', 'net', 'gov', 'ac', 'edu', 'or', 'ne', 'go']);
+  function baseDomain(name) {
+    const l = name.toLowerCase().replace(/\.$/, '').split('.');
+    if (l.length <= 2) return l.join('.');
+    const n = (l[l.length - 1].length === 2 && SLD.has(l[l.length - 2])) ? 3 : 2;
+    return l.slice(-n).join('.');
+  }
+  function fmtBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+  const TCP_FLAGS = [['FIN', 0x01], ['SYN', 0x02], ['RST', 0x04], ['PSH', 0x08], ['ACK', 0x10], ['URG', 0x20], ['ECE', 0x40], ['CWR', 0x80]];
+  function flagStr(f) { return TCP_FLAGS.filter(x => f & x[1]).map(x => x[0]).join(',') || 'none'; }
+  const QTYPES = { 1: 'A', 2: 'NS', 5: 'CNAME', 6: 'SOA', 10: 'NULL', 12: 'PTR', 15: 'MX', 16: 'TXT', 28: 'AAAA', 33: 'SRV', 35: 'NAPTR', 41: 'OPT', 43: 'DS', 46: 'RRSIG', 48: 'DNSKEY', 65: 'HTTPS', 255: 'ANY' };
+  const RCODES = { 0: 'NOERROR', 1: 'FORMERR', 2: 'SERVFAIL', 3: 'NXDOMAIN', 4: 'NOTIMP', 5: 'REFUSED' };
+  const LINKTYPES = { 0: 'BSD loopback', 1: 'Ethernet', 12: 'Raw IP', 14: 'Raw IP', 101: 'Raw IP', 108: 'OpenBSD loopback', 113: 'Linux cooked (SLL)', 127: '802.11 radiotap', 228: 'Raw IPv4', 229: 'Raw IPv6', 276: 'Linux cooked v2 (SLL2)' };
+  const PORT_NAMES = { 20: 'FTP-data', 21: 'FTP', 22: 'SSH', 23: 'Telnet', 25: 'SMTP', 53: 'DNS', 67: 'DHCP', 68: 'DHCP', 80: 'HTTP', 88: 'Kerberos', 110: 'POP3', 123: 'NTP', 135: 'MS-RPC', 137: 'NetBIOS-NS', 138: 'NetBIOS-DGM', 139: 'NetBIOS-SSN', 143: 'IMAP', 161: 'SNMP', 162: 'SNMP-trap', 389: 'LDAP', 443: 'HTTPS', 445: 'SMB', 465: 'SMTPS', 514: 'Syslog', 587: 'SMTP', 636: 'LDAPS', 853: 'DoT', 993: 'IMAPS', 995: 'POP3S', 1433: 'MSSQL', 1521: 'Oracle', 1900: 'SSDP', 3306: 'MySQL', 3389: 'RDP', 5353: 'mDNS', 5432: 'PostgreSQL', 5900: 'VNC', 5985: 'WinRM', 6379: 'Redis', 8080: 'HTTP-alt', 8443: 'HTTPS-alt', 9200: 'Elasticsearch', 27017: 'MongoDB' };
+  const SUSPICIOUS_PORTS = { 4444: 'Metasploit / common reverse-shell port', 1337: 'commonly used by backdoors', 31337: 'Back Orifice / elite-port backdoors', 6667: 'IRC (classic botnet C2)', 6697: 'IRC over TLS', 12345: 'NetBus trojan', 9001: 'Tor relay (ORPort)', 9050: 'Tor SOCKS proxy', 2323: 'Mirai-style Telnet alternative' };
+  const HTTP_PORTS = new Set([80, 8080, 8000, 8008, 8081, 8888, 3128, 8088, 81, 591, 8181]);
+  const TLS_PORTS = new Set([443, 8443, 465, 993, 995, 636, 853, 4443, 9443, 5061, 989, 990, 8883]);
+  const AUTH_PORTS = { 21: 'FTP', 22: 'SSH', 23: 'Telnet', 25: 'SMTP', 110: 'POP3', 143: 'IMAP', 445: 'SMB', 1433: 'MSSQL', 3306: 'MySQL', 3389: 'RDP', 5432: 'PostgreSQL', 5900: 'VNC', 5985: 'WinRM', 6379: 'Redis', 27017: 'MongoDB' };
+  const PERIODIC_OK = new Set([53, 67, 68, 123, 161, 1900, 5353, 137, 138, 5355, 3702]);
+
+  // ---------------------------------------------------------------- capture file parsing
+  function parseCapture(buf) {
+    if (buf.byteLength < 24) throw new Error('File is too small to be a capture.');
+    const dv = new DataView(buf), u8 = new Uint8Array(buf);
+    const magicBE = dv.getUint32(0, false), magicLE = dv.getUint32(0, true);
+    if (magicBE === 0x0a0d0d0a) return parsePcapng(dv, u8);
+    let little, nano;
+    if (magicLE === 0xa1b2c3d4) { little = true; nano = false; }
+    else if (magicLE === 0xa1b23c4d) { little = true; nano = true; }
+    else if (magicBE === 0xa1b2c3d4) { little = false; nano = false; }
+    else if (magicBE === 0xa1b23c4d) { little = false; nano = true; }
+    else throw new Error('Not a pcap or pcapng file: unrecognised magic number 0x' + magicBE.toString(16).padStart(8, '0') + '.');
+    const linktype = dv.getUint32(20, little) & 0x0fffffff;
+    const packets = []; const warnings = [];
+    let off = 24;
+    const div = nano ? 1e9 : 1e6;
+    while (off + 16 <= buf.byteLength) {
+      const sec = dv.getUint32(off, little), frac = dv.getUint32(off + 4, little);
+      const caplen = dv.getUint32(off + 8, little), len = dv.getUint32(off + 12, little);
+      off += 16;
+      if (off + caplen > buf.byteLength) { warnings.push('The file ends in the middle of a packet record; the last packet was dropped.'); break; }
+      packets.push({ ts: sec + frac / div, caplen, len, data: u8.subarray(off, off + caplen), linktype });
+      off += caplen;
+    }
+    return { format: nano ? 'pcap (ns timestamps)' : 'pcap', linktype, packets, interfaces: [{ linktype }], warnings };
+  }
+
+  function parsePcapng(dv, u8) {
+    const n = dv.byteLength; const packets = []; const warnings = [];
+    let interfaces = []; let little = true; let off = 0; let unknown = 0;
+    while (off + 12 <= n) {
+      const rawType = dv.getUint32(off, true);
+      if (rawType === 0x0a0d0d0a) { little = dv.getUint32(off + 8, true) === 0x1a2b3c4d; interfaces = []; }
+      const totalLen = dv.getUint32(off + 4, little);
+      if (totalLen < 12 || off + totalLen > n) { warnings.push('A truncated block was found at the end of the file.'); break; }
+      const t = dv.getUint32(off, little);
+      if (t === 1) {
+        const lt = dv.getUint16(off + 8, little), snap = dv.getUint32(off + 12, little);
+        let tsresol = 1e6, o = off + 16; const end = off + totalLen - 4;
+        while (o + 4 <= end) {
+          const code = dv.getUint16(o, little), ol = dv.getUint16(o + 2, little);
+          if (code === 0) break;
+          if (code === 9 && ol >= 1) { const v = u8[o + 4]; tsresol = (v & 0x80) ? Math.pow(2, v & 0x7f) : Math.pow(10, v); }
+          o += 4 + ((ol + 3) & ~3);
+        }
+        interfaces.push({ linktype: lt, snaplen: snap, tsresol });
+      } else if (t === 6) {
+        const ifid = dv.getUint32(off + 8, little);
+        const tsHi = dv.getUint32(off + 12, little), tsLo = dv.getUint32(off + 16, little);
+        const caplen = dv.getUint32(off + 20, little), len = dv.getUint32(off + 24, little);
+        const iface = interfaces[ifid] || interfaces[0] || { linktype: 1, tsresol: 1e6 };
+        if (28 + caplen <= totalLen) packets.push({ ts: (tsHi * 4294967296 + tsLo) / iface.tsresol, caplen, len, data: u8.subarray(off + 28, off + 28 + caplen), linktype: iface.linktype });
+      } else if (t === 3) {
+        const len = dv.getUint32(off + 8, little); const iface = interfaces[0] || { linktype: 1, snaplen: 0 };
+        const caplen = Math.min(len, totalLen - 16, iface.snaplen || len);
+        packets.push({ ts: packets.length ? packets[packets.length - 1].ts : 0, caplen, len, data: u8.subarray(off + 12, off + 12 + caplen), linktype: iface.linktype });
+      } else if (t === 2) {
+        const ifid = dv.getUint16(off + 8, little);
+        const tsHi = dv.getUint32(off + 12, little), tsLo = dv.getUint32(off + 16, little);
+        const caplen = dv.getUint32(off + 20, little), len = dv.getUint32(off + 24, little);
+        const iface = interfaces[ifid] || interfaces[0] || { linktype: 1, tsresol: 1e6 };
+        if (28 + caplen <= totalLen) packets.push({ ts: (tsHi * 4294967296 + tsLo) / iface.tsresol, caplen, len, data: u8.subarray(off + 28, off + 28 + caplen), linktype: iface.linktype });
+      } else if (t !== 0x0a0d0d0a && t !== 4 && t !== 5 && t !== 10) unknown++;
+      off += totalLen;
+    }
+    if (unknown) warnings.push(unknown + ' pcapng block(s) of unknown type were skipped.');
+    if (!interfaces.length && !packets.length) throw new Error('The pcapng file contains no interface or packet blocks.');
+    return { format: 'pcapng', linktype: interfaces[0] ? interfaces[0].linktype : 1, packets, interfaces, warnings };
+  }
+
+  // ---------------------------------------------------------------- packet decoding
+  function readName(b, o, depth) {
+    depth = depth || 0;
+    if (depth > 8) return null;
+    const labels = []; let end = -1; let guard = 0;
+    while (o < b.length && guard++ < 128) {
+      const l = b[o];
+      if (l === 0) { if (end < 0) end = o + 1; break; }
+      if ((l & 0xc0) === 0xc0) {
+        if (o + 1 >= b.length) return null;
+        const ptr = ((l & 0x3f) << 8) | b[o + 1];
+        if (end < 0) end = o + 2;
+        const r = readName(b, ptr, depth + 1);
+        if (!r) return null;
+        labels.push(r.name);
+        return { name: labels.filter(Boolean).join('.'), end };
+      }
+      if (o + 1 + l > b.length) return null;
+      labels.push(ascii(b, o + 1, o + 1 + l));
+      o += 1 + l;
+    }
+    if (end < 0) return null;
+    return { name: labels.join('.'), end };
+  }
+
+  function parseDns(b, isTcp) {
+    let o = 0;
+    if (isTcp) { if (b.length < 14) return null; o = 2; }
+    if (b.length < o + 12) return null;
+    const id = u16(b, o), flags = u16(b, o + 2);
+    const qr = !!(flags & 0x8000), opcode = (flags >> 11) & 0xf, rcode = flags & 0xf;
+    const qd = u16(b, o + 4), an = u16(b, o + 6);
+    if (opcode > 2 || qd > 10) return null;
+    o += 12;
+    const questions = [];
+    for (let i = 0; i < qd; i++) {
+      const r = readName(b, o); if (!r || r.end + 4 > b.length) return null;
+      questions.push({ name: r.name, type: u16(b, r.end) });
+      o = r.end + 4;
+    }
+    const answers = [];
+    for (let i = 0; i < an && i < 40; i++) {
+      const r = readName(b, o); if (!r) break; o = r.end;
+      if (o + 10 > b.length) break;
+      const type = u16(b, o), ttl = u32(b, o + 4), rdlen = u16(b, o + 8); o += 10;
+      if (o + rdlen > b.length) break;
+      let data = null;
+      if (type === 1 && rdlen === 4) data = ip4(b, o);
+      else if (type === 28 && rdlen === 16) data = ip6(b, o);
+      else if (type === 5 || type === 2 || type === 12) { const c = readName(b, o); data = c ? c.name : null; }
+      else if (type === 16) { data = ascii(b, o + 1, Math.min(o + rdlen, o + 1 + b[o])); }
+      answers.push({ name: r.name, type, ttl, data, rdlen });
+      o += rdlen;
+    }
+    return { id, qr, opcode, rcode, qd, an, questions, answers };
+  }
+
+  // Compact MD5 (for JA3 hashes).
+  function md5(str) {
+    const K = []; for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296);
+    const S = [7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21];
+    const bytes = []; for (let i = 0; i < str.length; i++) bytes.push(str.charCodeAt(i) & 0xff);
+    const bitLen = bytes.length * 8; bytes.push(0x80); while (bytes.length % 64 !== 56) bytes.push(0);
+    for (let i = 0; i < 8; i++) bytes.push(i < 4 ? (bitLen >>> (8 * i)) & 0xff : 0);
+    let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+    const rotl = (x, c) => (x << c) | (x >>> (32 - c));
+    for (let off = 0; off < bytes.length; off += 64) {
+      const M = []; for (let i = 0; i < 16; i++) M[i] = bytes[off + i * 4] | (bytes[off + i * 4 + 1] << 8) | (bytes[off + i * 4 + 2] << 16) | (bytes[off + i * 4 + 3] << 24);
+      let A = a0, B = b0, C = c0, D = d0;
+      for (let i = 0; i < 64; i++) {
+        let F, g;
+        if (i < 16) { F = (B & C) | (~B & D); g = i; } else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; } else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; } else { F = C ^ (B | ~D); g = (7 * i) % 16; }
+        F = (F + A + K[i] + M[g]) | 0; A = D; D = C; C = B; B = (B + rotl(F, S[i])) | 0;
+      }
+      a0 = (a0 + A) | 0; b0 = (b0 + B) | 0; c0 = (c0 + C) | 0; d0 = (d0 + D) | 0;
+    }
+    return [a0, b0, c0, d0].map(v => { let s = ''; for (let i = 0; i < 4; i++) s += ((v >>> (8 * i)) & 0xff).toString(16).padStart(2, '0'); return s; }).join('');
+  }
+  const isGrease = v => (v & 0x0f0f) === 0x0a0a;
+
+  // Compact SHA-256 over a byte array (Uint8Array or number[]), returns lowercase hex.
+  function sha256hex(bytes) {
+    const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+    let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+    const l = bytes.length; const bitLen = l * 8;
+    const withPad = ((l + 8) >> 6 << 6) + 64; const m = new Uint8Array(withPad); m.set(bytes); m[l] = 0x80;
+    const dv = new DataView(m.buffer); dv.setUint32(withPad - 4, bitLen >>> 0); dv.setUint32(withPad - 8, Math.floor(bitLen / 4294967296));
+    const w = new Uint32Array(64); const rr = (x, n) => (x >>> n) | (x << (32 - n));
+    for (let i = 0; i < withPad; i += 64) {
+      for (let t = 0; t < 16; t++) w[t] = dv.getUint32(i + t * 4);
+      for (let t = 16; t < 64; t++) { const s0 = rr(w[t - 15], 7) ^ rr(w[t - 15], 18) ^ (w[t - 15] >>> 3); const s1 = rr(w[t - 2], 17) ^ rr(w[t - 2], 19) ^ (w[t - 2] >>> 10); w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0; }
+      let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, hh = h7;
+      for (let t = 0; t < 64; t++) { const S1 = rr(e, 6) ^ rr(e, 11) ^ rr(e, 25); const ch = (e & f) ^ (~e & g); const t1 = (hh + S1 + ch + K[t] + w[t]) | 0; const S0 = rr(a, 2) ^ rr(a, 13) ^ rr(a, 22); const maj = (a & b) ^ (a & c) ^ (b & c); const t2 = (S0 + maj) | 0; hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0; }
+      h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0; h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + hh) | 0;
+    }
+    return [h0, h1, h2, h3, h4, h5, h6, h7].map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');
+  }
+  const sha256_12 = s => sha256hex(Array.from(s, c => c.charCodeAt(0) & 0xff)).slice(0, 12);
+
+  // JA4 client fingerprint (TLS-over-TCP). Spec: FoxIO JA4. Shape t<ver><sni><nciph><next><alpn>_<hash12 ciphers>_<hash12 exts+sigalgs>.
+  function ja4(ch) {
+    try {
+      const verMap = { 0x0304: '13', 0x0303: '12', 0x0302: '11', 0x0301: '10' };
+      let ver = verMap[ch.maxVersion || ch.version] || '00';
+      const sni = ch.sni ? 'd' : 'i';
+      const nc = Math.min(99, ch.ciphers).toString().padStart(2, '0');
+      const ne = Math.min(99, ch.exts.length).toString().padStart(2, '0');
+      const alpn = ch.alpnFirst ? (ch.alpnFirst[0] + (ch.alpnFirst[ch.alpnFirst.length - 1] || ch.alpnFirst[0])) : '00';
+      const cipherHex = (ch.cipherList || []).map(v => v.toString(16).padStart(4, '0')).sort();
+      const extHex = (ch.exts || []).filter(v => v !== 0x0000 && v !== 0x0010).map(v => v.toString(16).padStart(4, '0')).sort();
+      const sigHex = (ch.sigAlgs || []).map(v => v.toString(16).padStart(4, '0'));
+      const a = 't' + ver + sni + nc + ne + alpn;
+      const b = cipherHex.length ? sha256_12(cipherHex.join(',')) : '000000000000';
+      const c = sha256_12(extHex.join(',') + (sigHex.length ? '_' + sigHex.join(',') : ''));
+      return a + '_' + b + '_' + c;
+    } catch (e) { return null; }
+  }
+
+  // defang indicators for safe sharing in reports / tickets
+  function defang(s) { return String(s).replace(/\./g, '[.]').replace(/^http/i, 'hxxp').replace(/:\/\//, '[://]').replace(/@/g, '[@]'); }
+
+  // file type by magic bytes (first bytes of a carved object)
+  function magicType(b) {
+    if (!b || b.length < 4) return null;
+    const h = (n) => Array.from(b.subarray(0, n)).map(x => x.toString(16).padStart(2, '0')).join('');
+    const a = ascii(b, 0, Math.min(b.length, 8));
+    if (b[0] === 0x4d && b[1] === 0x5a) return { type: 'PE/MZ executable (.exe/.dll)', danger: true, ext: 'exe' };
+    if (b[0] === 0x7f && b[1] === 0x45 && b[2] === 0x4c && b[3] === 0x46) return { type: 'ELF executable', danger: true, ext: 'elf' };
+    if (h(4) === 'cafebabe' || h(4) === 'feedface' || h(4) === 'cffaedfe' || h(4) === 'feedfacf') return { type: 'Mach-O executable', danger: true, ext: 'macho' };
+    if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) return { type: 'MS Office / MSI (OLE2)', danger: true, ext: 'ole' };
+    if (a.startsWith('MSCF')) return { type: 'Microsoft Cabinet (.cab)', danger: true, ext: 'cab' };
+    if (b[0] === 0x50 && b[1] === 0x4b && (b[2] === 3 || b[2] === 5 || b[2] === 7)) return { type: 'ZIP / Office OOXML / JAR', danger: true, ext: 'zip' };
+    if (a.startsWith('Rar!')) return { type: 'RAR archive', danger: true, ext: 'rar' };
+    if (b[0] === 0x1f && b[1] === 0x8b) return { type: 'gzip', danger: false, ext: 'gz' };
+    if (a.startsWith('7z\xbc') || (b[0] === 0x37 && b[1] === 0x7a)) return { type: '7-Zip archive', danger: true, ext: '7z' };
+    if (a.startsWith('%PDF')) return { type: 'PDF document', danger: false, ext: 'pdf' };
+    if (a.startsWith('#!')) return { type: 'script with shebang', danger: true, ext: 'sh' };
+    if (/^<\?php/i.test(a)) return { type: 'PHP script', danger: true, ext: 'php' };
+    if (/^(<script|<html|<!doctype)/i.test(a)) return { type: 'HTML', danger: false, ext: 'html' };
+    if (b[0] === 0xff && b[1] === 0xd8) return { type: 'JPEG image', danger: false, ext: 'jpg' };
+    if (a.startsWith('\x89PNG')) return { type: 'PNG image', danger: false, ext: 'png' };
+    if (a.startsWith('GIF8')) return { type: 'GIF image', danger: false, ext: 'gif' };
+    return null;
+  }
+  const EXE_EXT = /\.(exe|dll|scr|bat|cmd|ps1|vbs|js|jse|wsf|hta|msi|jar|cab|com|pif|cpl|lnk|iso|img|vhd|apk|elf|bin|sh|py|rb|php)(\?|$)/i;
+
+  // IDN / homoglyph: punycode labels and mixed-script host names
+  function suspiciousName(name) {
+    if (!name) return null;
+    if (/(^|\.)xn--/i.test(name)) return 'internationalised (punycode) domain';
+    if (/[Ѐ-ӿͰ-ϿԀ-ԯ‐-‧]/.test(name)) return 'mixed-script / homoglyph characters';
+    return null;
+  }
+  const NTLM_SIG = 'NTLMSSP\x00';
+  const KRB_ETYPE = { 23: 'RC4-HMAC (roastable)', 17: 'AES128', 18: 'AES256', 3: 'DES' };
+
+  function parseTlsClientHello(p) {
+    try {
+      let o = 5; if (p[o] !== 1) return null;
+      const version = u16(p, o + 4);
+      o += 4 + 2 + 32;
+      const sidLen = p[o]; o += 1 + sidLen;
+      const csLen = u16(p, o); const ciphers = [];
+      for (let i = 0; i + 1 < csLen; i += 2) { const v = u16(p, o + 2 + i); if (!isGrease(v)) ciphers.push(v); }
+      o += 2 + csLen;
+      const cmLen = p[o]; o += 1 + cmLen;
+      const r = { sni: null, version, maxVersion: version, ciphers: ciphers.length, cipherList: ciphers, exts: [], curves: [], points: [], alpn: false, alpnFirst: null, sigAlgs: [] };
+      if (o + 2 > p.length) return r;
+      const extLen = u16(p, o); o += 2;
+      const end = Math.min(p.length, o + extLen);
+      while (o + 4 <= end) {
+        const t = u16(p, o), l = u16(p, o + 2); o += 4;
+        if (!isGrease(t)) r.exts.push(t);
+        if (t === 0 && o + 5 <= end) { const nl = u16(p, o + 3); r.sni = ascii(p, o + 5, Math.min(o + 5 + nl, end)); }
+        else if (t === 10 && o + 2 <= end) { const n = u16(p, o); for (let i = 0; i + 1 < n && o + 2 + i + 1 < end; i += 2) { const v = u16(p, o + 2 + i); if (!isGrease(v)) r.curves.push(v); } }
+        else if (t === 11 && o + 1 <= end) { const n = p[o]; for (let i = 0; i < n && o + 1 + i < end; i++) r.points.push(p[o + 1 + i]); }
+        else if (t === 13 && o + 2 <= end) { const n = u16(p, o); for (let i = 0; i + 1 < n && o + 2 + i + 1 < end; i += 2) r.sigAlgs.push(u16(p, o + 2 + i)); }
+        else if (t === 16) { r.alpn = true; if (o + 3 <= end) { const first = p[o + 2]; r.alpnFirst = ascii(p, o + 3, Math.min(o + 3 + first, end)); } }
+        else if (t === 43 && o + 1 <= end) { const n = p[o]; let mx = 0; for (let i = 0; i + 1 < n && o + 1 + i + 1 <= end; i += 2) { const v = u16(p, o + 1 + i); if (!isGrease(v) && v > mx && v <= 0x0304) mx = v; } if (mx) r.maxVersion = mx; }
+        o += l;
+      }
+      r.ja3 = md5(version + ',' + ciphers.join('-') + ',' + r.exts.join('-') + ',' + r.curves.join('-') + ',' + r.points.join('-'));
+      r.ja4 = ja4(r);
+      return r;
+    } catch (e) { return null; }
+  }
+  // ---- minimal DER / X.509 parsing to pull certificate IoCs out of the TLS 1.2 handshake
+  function derRead(b, o) { // returns {tag, len, vstart, next}
+    if (o + 1 >= b.length) return null;
+    const tag = b[o]; let len = b[o + 1]; let vs = o + 2;
+    if (len & 0x80) { const nb = len & 0x7f; if (nb > 4 || vs + nb > b.length) return null; len = 0; for (let i = 0; i < nb; i++) len = (len << 8) | b[vs + i]; vs += nb; }
+    if (vs + len > b.length) len = b.length - vs;
+    return { tag, len, vstart: vs, next: vs + len };
+  }
+  function derChildren(b, o, end) { const out = []; let p = o; while (p < end) { const t = derRead(b, p); if (!t) break; out.push(t); p = t.next; } return out; }
+  function cnFromName(b, s, e) { // scan a Name range for CN (OID 55 04 03) then the following string
+    for (let i = s; i + 4 < e; i++) { if (b[i] === 0x06 && b[i + 1] === 0x03 && b[i + 2] === 0x55 && b[i + 3] === 0x04 && b[i + 4] === 0x03) { const v = derRead(b, i + 5); if (v && (v.tag === 0x0c || v.tag === 0x13 || v.tag === 0x16 || v.tag === 0x1e)) return ascii(b, v.vstart, v.vstart + v.len); } }
+    return null;
+  }
+  function derTime(b, t) { const s = ascii(b, t.vstart, t.vstart + t.len); let m; if (t.tag === 0x17) m = /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)?Z?/.exec(s); else m = /^(\d\d\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)?Z?/.exec(s); if (!m) return null; let y = +m[1]; if (t.tag === 0x17) y = y < 50 ? 2000 + y : 1900 + y; return Date.UTC(y, +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) / 1000; }
+  function parseCert(b, s, e) {
+    try {
+      const cert = derRead(b, s); if (!cert || cert.tag !== 0x30) return null;
+      const tbs = derRead(b, cert.vstart); if (!tbs || tbs.tag !== 0x30) return null;
+      const ch = derChildren(b, tbs.vstart, tbs.next);
+      let i = 0; if (ch[0] && ch[0].tag === 0xa0) i = 1; // skip version
+      const serial = ch[i]; const sig = ch[i + 1]; const issuer = ch[i + 2]; const validity = ch[i + 3]; const subject = ch[i + 4];
+      const r = {};
+      if (issuer) r.issuer = cnFromName(b, issuer.vstart, issuer.next);
+      if (subject) r.subject = cnFromName(b, subject.vstart, subject.next);
+      if (validity && validity.tag === 0x30) { const vc = derChildren(b, validity.vstart, validity.next); if (vc[0]) r.notBefore = derTime(b, vc[0]); if (vc[1]) r.notAfter = derTime(b, vc[1]); }
+      r.selfSigned = r.issuer && r.subject && r.issuer === r.subject;
+      r.sha1 = sha1hex(b.subarray(s, cert.next));
+      return r;
+    } catch (e) { return null; }
+  }
+  // SHA-1 for certificate thumbprints
+  function sha1hex(bytes) {
+    let h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0;
+    const l = bytes.length, bitLen = l * 8; const withPad = ((l + 8) >> 6 << 6) + 64; const m = new Uint8Array(withPad); m.set(bytes); m[l] = 0x80;
+    const dv = new DataView(m.buffer); dv.setUint32(withPad - 4, bitLen >>> 0); dv.setUint32(withPad - 8, Math.floor(bitLen / 4294967296));
+    const w = new Int32Array(80); const rl = (x, n) => (x << n) | (x >>> (32 - n));
+    for (let i = 0; i < withPad; i += 64) {
+      for (let t = 0; t < 16; t++) w[t] = dv.getInt32(i + t * 4);
+      for (let t = 16; t < 80; t++) w[t] = rl(w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16], 1);
+      let a = h0, b2 = h1, c = h2, d = h3, e = h4;
+      for (let t = 0; t < 80; t++) { let f, k; if (t < 20) { f = (b2 & c) | (~b2 & d); k = 0x5A827999; } else if (t < 40) { f = b2 ^ c ^ d; k = 0x6ED9EBA1; } else if (t < 60) { f = (b2 & c) | (b2 & d) | (c & d); k = 0x8F1BBCDC; } else { f = b2 ^ c ^ d; k = 0xCA62C1D6; } const tmp = (rl(a, 5) + f + e + k + w[t]) | 0; e = d; d = c; c = rl(b2, 30); b2 = a; a = tmp; }
+      h0 = (h0 + a) | 0; h1 = (h1 + b2) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0; h4 = (h4 + e) | 0;
+    }
+    return [h0, h1, h2, h3, h4].map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');
+  }
+  // Parse ServerHello from a concatenated server→client TLS buffer: selected version + cipher + JA3S.
+  function serverHelloInfo(buf) {
+    let o = 0; const hs = [];
+    while (o + 5 <= buf.length) { const ct = buf[o], recLen = u16(buf, o + 3); if (ct !== 0x16 || buf[o + 1] !== 3) break; for (let i = o + 5; i < Math.min(buf.length, o + 5 + recLen); i++) hs.push(buf[i]); o += 5 + recLen; if (o > 65536) break; }
+    const H = hs.length; if (H < 4 || hs[0] !== 2) return null;
+    try {
+      const b = Uint8Array.from(hs); let p = 4; const version = u16(b, p); p += 2 + 32; const sidLen = b[p]; p += 1 + sidLen; const cipher = u16(b, p); p += 2; p += 1; // compression
+      const exts = []; if (p + 2 <= H) { const el = u16(b, p); p += 2; const end = Math.min(H, p + el); while (p + 4 <= end) { const t = u16(b, p), l = u16(b, p + 2); if (!isGrease(t)) exts.push(t); p += 4 + l; } }
+      const ja3s = md5(version + ',' + cipher + ',' + exts.join('-'));
+      return { version, cipher, ja3s };
+    } catch (e) { return null; }
+  }
+  // From a concatenated server→client TLS byte buffer, pull the first certificate (TLS 1.2 and earlier only).
+  function certFromServerBuffer(buf) {
+    let o = 0; const hs = [];
+    while (o + 5 <= buf.length) {
+      const ct = buf[o], recLen = u16(buf, o + 3);
+      if (ct !== 0x16 && ct !== 0x14 && ct !== 0x17 && ct !== 0x15) break;
+      if (buf[o + 1] !== 3) break;
+      if (ct === 0x16) for (let i = o + 5; i < Math.min(buf.length, o + 5 + recLen); i++) hs.push(buf[i]);
+      o += 5 + recLen; if (o > 65536) break;
+    }
+    const H = hs.length; let p = 0;
+    while (p + 4 <= H) {
+      const mt = hs[p], mlen = (hs[p + 1] << 16) | (hs[p + 2] << 8) | hs[p + 3]; const body = p + 4;
+      if (mt === 11) { // Certificate
+        const hb = Uint8Array.from(hs);
+        let q = body + 3; // skip total certs length
+        if (q + 3 <= H) { const clen = (hs[q] << 16) | (hs[q + 1] << 8) | hs[q + 2]; q += 3; const cert = parseCert(hb, q, q + clen); if (cert) return cert; }
+        return null;
+      }
+      p = body + mlen;
+    }
+    return null;
+  }
+
+  const KNOWN_JA3 = { '72a589da586844d7f0818ce684948eea': 'Cobalt Strike (default Windows beacon)', 'a0e9f5d64349fb13191bc781f81f42e1': 'Cobalt Strike / Metasploit (WinINet)' };
+  const FREE_CA = /let's encrypt|zerossl|buypass|sectigo.*(dv|free)/i;
+  const C2_URIS = [
+    [/^\/(dpixel|__utm\.gif|pixel\.gif|ga\.js|pixel|activity|IE9CompatViewList\.xml|ca|load|match|updates\.rss|fwlink|cm|cx|push|submit\.php|en_US\/all\.js|jquery-3\.3\.[12]\.min\.js)(\?|$)/, 'Cobalt Strike default malleable profile'],
+    [/^\/(login\/process\.php|admin\/get\.php|news\.php)(\?|$)/, 'Empire / Starkiller default profile'],
+    [/^\/en-us\/(index|docs|test)\.html(\?|$)/, 'Covenant default profile'],
+    [/^\/funny_cat\.gif(\?|$)/, 'Havoc default profile'],
+  ];
+  function checksum8(path) { const seg = path.split('?')[0].replace(/^\//, ''); if (!/^[A-Za-z0-9_-]{4,5}$/.test(seg)) return 0; let s = 0; for (let i = 0; i < seg.length; i++) s += seg.charCodeAt(i); return s % 256; }
+  const DOH_HOSTS = ['dns.google', 'cloudflare-dns.com', 'one.one.one.one', 'dns.quad9.net', 'doh.opendns.com', 'dns.adguard.com', 'doh.cleanbrowsing.org', 'dns.nextdns.io', 'doh.dns.sb', 'dns.alidns.com'];
+  const SERVICE_C2 = [
+    [/(^|\.)discord(app)?\.(com|gg)$/, 'Discord'], [/(^|\.)telegram\.org$/, 'Telegram'], [/(^|\.)slack(-edge|-files)?\.com$/, 'Slack'], [/^(api\.|raw\.|gist\.)?github(usercontent)?\.com$/, 'GitHub'],
+    [/(^|\.)pastebin\.com$/, 'Pastebin'], [/(^|\.)dropboxapi\.com$/, 'Dropbox API'], [/^(www\.)?googleapis\.com$/, 'Google APIs'], [/^graph\.microsoft\.com$/, 'Microsoft Graph'], [/(^|\.)onedrive\.live\.com$/, 'OneDrive'],
+    [/(^|\.)notion\.com$/, 'Notion'], [/(^|\.)trello\.com$/, 'Trello'], [/\.workers\.dev$/, 'Cloudflare Workers'], [/\.azurewebsites\.net$/, 'Azure App Service'], [/\.cloudfront\.net$/, 'CloudFront (possible fronting)'], [/\.herokuapp\.com$/, 'Heroku'],
+    [/\.ngrok(-free)?\.(io|app|dev)$/, 'ngrok tunnel'], [/\.trycloudflare\.com$/, 'Cloudflare quick tunnel'], [/(^|\.)mastodon\.social$/, 'Mastodon'], [/^(api\.)?twitter\.com$|^(api\.)?x\.com$/, 'X / Twitter API'],
+  ];
+  function serviceOf(name) { if (!name) return null; const n = name.toLowerCase(); if (DOH_HOSTS.includes(n)) return 'DNS-over-HTTPS resolver'; for (const [re, label] of SERVICE_C2) if (re.test(n)) return label; return null; }
+  const OLD_UA = /MSIE [5-9]|MSIE 10|Trident\/[4-7]|Windows NT 5\.|Windows NT 6\.[0-3]|Firefox\/[1-5]?[0-9]\.|Chrome\/[1-6]?[0-9]\./;
+
+  const HTTP_METHODS = ['GET ', 'POST ', 'PUT ', 'HEAD ', 'DELETE ', 'OPTIONS ', 'PATCH ', 'CONNECT ', 'TRACE '];
+  function startsWithAscii(b, s) {
+    if (b.length < s.length) return false;
+    for (let i = 0; i < s.length; i++) if (b[i] !== s.charCodeAt(i)) return false;
+    return true;
+  }
+  function parseHttp(b) {
+    const text = ascii(b, 0, Math.min(b.length, 2048));
+    const lines = text.split('\n');
+    const first = lines[0] || '';
+    if (/^HTTP\/\d\.\d \d{3}/.test(first)) return { response: true, status: parseInt(first.slice(9, 12), 10), line: first.slice(0, 80) };
+    const m = /^([A-Z]+) (\S+) HTTP\/(\d\.\d)/.exec(first);
+    if (!m) return null;
+    const h = { response: false, method: m[1], path: m[2], version: m[3], host: null, auth: null, ua: null, bodyEntropy: 0, bodyLen: 0 };
+    for (let i = 1; i < lines.length && i < 40; i++) {
+      const l = lines[i]; const c = l.indexOf(':'); if (c < 0) continue;
+      const k = l.slice(0, c).toLowerCase(), v = l.slice(c + 1).trim();
+      if (k === 'host') h.host = v;
+      else if (k === 'authorization') h.auth = v;
+      else if (k === 'user-agent') h.ua = v.slice(0, 120);
+    }
+    // body entropy (bytes after the blank line), for spotting encrypted blobs over cleartext HTTP
+    for (let i = 0; i + 3 < b.length; i++) {
+      if (b[i] === 13 && b[i + 1] === 10 && b[i + 2] === 13 && b[i + 3] === 10) {
+        const body = b.subarray(i + 4); h.bodyLen = body.length;
+        if (body.length >= 64) { const f = new Uint32Array(256); for (let j = 0; j < body.length; j++) f[body[j]]++; let e = 0; for (let j = 0; j < 256; j++) if (f[j]) { const q = f[j] / body.length; e -= q * Math.log2(q); } h.bodyEntropy = e; }
+        break;
+      }
+    }
+    return h;
+  }
+
+  let DECODE_AS = {};
+  function setDecodeAs(m) { DECODE_AS = m || {}; }
+  function decodeApp(p, payload, sport, dport, isTcp) {
+    const forced = DECODE_AS[dport] || DECODE_AS[sport];
+    if (forced && payload && payload.length) {
+      if (forced === 'http' && isTcp) { const h = parseHttp(payload); if (h) { p.app = 'HTTP'; p.http = h; p.info = h.response ? h.line : h.method + ' ' + (h.host ? 'http://' + h.host : '') + h.path; return; } }
+      else if (forced === 'tls' && isTcp && payload[0] >= 0x14 && payload[0] <= 0x17) { p.app = 'TLS'; if (payload[0] === 0x16 && payload[5] === 1) { const ch = parseTlsClientHello(payload); p.tls = { clientHello: true, sni: ch && ch.sni, ja3: ch && ch.ja3, ja4: ch && ch.ja4 }; p.info = 'Client Hello' + (p.tls.sni ? ' SNI=' + p.tls.sni : ''); } else p.info = 'TLS record'; return; }
+      else if (forced === 'dns') { const d = parseDns(payload, isTcp); if (d) { p.dns = d; p.app = 'DNS'; const q = d.questions[0]; p.info = (d.qr ? 'Response ' : 'Query ') + (q ? (QTYPES[q.type] || q.type) + ' ' + q.name : ''); return; } }
+    }
+    if (!payload || !payload.length) {
+      const pn = PORT_NAMES[dport] || PORT_NAMES[sport];
+      if (pn && isTcp) p.app = pn;
+      return;
+    }
+    // DNS (and mDNS / LLMNR)
+    if (sport === 53 || dport === 53 || sport === 5353 || dport === 5353 || sport === 5355 || dport === 5355) {
+      const d = parseDns(payload, isTcp);
+      if (d) {
+        p.dns = d; p.app = (sport === 5353 || dport === 5353) ? 'mDNS' : (sport === 5355 || dport === 5355) ? 'LLMNR' : 'DNS';
+        const q = d.questions[0];
+        p.info = (d.qr ? 'Response ' : 'Query ') + (q ? (QTYPES[q.type] || q.type) + ' ' + q.name : '') + (d.qr ? ' ' + (RCODES[d.rcode] || 'rcode ' + d.rcode) + (d.answers.length ? ' → ' + d.answers.filter(a => a.data).map(a => a.data).slice(0, 3).join(', ') : '') : '');
+        return;
+      }
+    }
+    if (isTcp) {
+      // TLS
+      if (payload.length >= 6 && payload[0] >= 0x14 && payload[0] <= 0x17 && payload[1] === 3 && payload[2] <= 4) {
+        p.app = (sport === 443 || dport === 443 || sport === 8443 || dport === 8443) ? 'HTTPS' : 'TLS';
+        if (payload[0] === 0x16 && payload[5] === 1) {
+          const ch = parseTlsClientHello(payload);
+          p.tls = { clientHello: true, sni: ch && ch.sni, version: ch && ch.version, ja3: ch && ch.ja3, ja4: ch && ch.ja4, ciphers: ch ? ch.ciphers : 0, alpn: !!(ch && ch.alpn) };
+          p.info = 'Client Hello' + (p.tls.sni ? ' SNI=' + p.tls.sni : '');
+        } else if (payload[0] === 0x16 && payload[5] === 2) { p.tls = { serverHello: true }; p.info = 'Server Hello'; }
+        else if (payload[0] === 0x17) { p.info = 'Application data (' + payload.length + ' B)'; }
+        else if (payload[0] === 0x15) { p.info = 'Alert'; }
+        else if (payload[0] === 0x16) { p.info = 'Handshake'; }
+        else { p.info = 'Change cipher spec'; }
+        return;
+      }
+      // HTTP
+      if (HTTP_METHODS.some(m => startsWithAscii(payload, m)) || startsWithAscii(payload, 'HTTP/1.')) {
+        const h = parseHttp(payload);
+        if (h) {
+          p.app = 'HTTP'; p.http = h;
+          p.info = h.response ? h.line : h.method + ' ' + (h.host ? 'http://' + h.host : '') + h.path;
+          return;
+        }
+      }
+      if (startsWithAscii(payload, 'SSH-')) { p.app = 'SSH'; p.info = ascii(payload, 0, Math.min(payload.length, 40)).split('\n')[0]; return; }
+      // Text protocols with credentials
+      const port = Math.min(sport, dport);
+      if (port === 21 || port === 110 || port === 143 || port === 25 || port === 587 || port === 23) {
+        const line = ascii(payload, 0, Math.min(payload.length, 120)).split('\n')[0];
+        p.app = port === 21 ? 'FTP' : port === 110 ? 'POP3' : port === 143 ? 'IMAP' : port === 23 ? 'Telnet' : 'SMTP';
+        p.info = line.slice(0, 80);
+        let m;
+        if ((m = /^USER\s+(\S+)/i.exec(line)) && dport === port) p.cred = { proto: p.app, user: m[1] };
+        else if (/^PASS\s+\S/i.test(line) && dport === port) p.cred = { proto: p.app, password: true };
+        else if ((m = /^\S+\s+LOGIN\s+"?([^"\s]+)/i.exec(line)) && port === 143 && dport === port) p.cred = { proto: 'IMAP', user: m[1] };
+        else if (/^AUTH (PLAIN|LOGIN)/i.test(line) && dport === port) p.cred = { proto: 'SMTP', user: null };
+        return;
+      }
+      if (payload.length >= 4 && payload[0] === 0 && ((payload[1] === 0 && ascii(payload, 5, 8) === 'SMB') || ascii(payload, 4, 8) === '\xfeSMB' || ascii(payload, 4, 8) === '\xffSMB')) { p.app = 'SMB'; return; }
+      if (port === 445 || port === 139) { p.app = 'SMB'; return; }
+      if (port === 3389) { p.app = 'RDP'; return; }
+    } else {
+      const port = Math.min(sport, dport);
+      if (sport === 67 || sport === 68) { p.app = 'DHCP'; return; }
+      if (port === 123) { p.app = 'NTP'; return; }
+      if (port === 161 || port === 162) { p.app = 'SNMP'; return; }
+      if (port === 1900) { p.app = 'SSDP'; return; }
+      if (port === 137) { p.app = 'NBNS'; return; }
+      if (port === 443 && payload.length > 1 && (payload[0] & 0x80)) { p.app = 'QUIC'; return; }
+      if (port === 514) { p.app = 'Syslog'; return; }
+      if (dport === 4789 && payload.length >= 22) { // VXLAN → inner Ethernet → inner IP
+        try { const et = u16(payload, 8 + 12); const io = 8 + 14; if (et === 0x0800 && io + 20 <= payload.length) { p.app = 'VXLAN'; p.tunnel = { type: 'VXLAN', vni: (payload[4] << 16) | (payload[5] << 8) | payload[6], innerSrc: ip4(payload, io + 12), innerDst: ip4(payload, io + 16), innerProto: protoName(payload[io + 9]) }; p.info = 'VXLAN VNI ' + p.tunnel.vni + ' · inner ' + p.tunnel.innerSrc + ' → ' + p.tunnel.innerDst; return; } } catch (e) { }
+      }
+      if (dport === 2152 && payload.length >= 28) { // GTP-U → inner IP
+        try { const ho = 8; if ((payload[ho] >> 4) === 4 && ho + 20 <= payload.length) { p.app = 'GTP-U'; p.tunnel = { type: 'GTP-U', innerSrc: ip4(payload, ho + 12), innerDst: ip4(payload, ho + 16), innerProto: protoName(payload[ho + 9]) }; p.info = 'GTP-U · inner ' + p.tunnel.innerSrc + ' → ' + p.tunnel.innerDst; return; } } catch (e) { }
+      }
+    }
+    const pn = PORT_NAMES[dport] || PORT_NAMES[sport];
+    if (pn && isTcp) p.app = pn;
+  }
+
+  function decodePacket(pkt, index) {
+    const b = pkt.data;
+    const p = { n: index + 1, ts: pkt.ts, len: pkt.len, caplen: pkt.caplen, proto: 'Other', info: '', src: '', dst: '' };
+    if (pkt.caplen < pkt.len) p.truncated = true;
+    try {
+      let o = 0, etype = 0; const lt = pkt.linktype;
+      if (lt === 1) {
+        if (b.length < 14) throw new Error('short');
+        p.eth = { dst: mac(b, 0), src: mac(b, 6) };
+        etype = u16(b, 12); o = 14;
+        while (etype === 0x8100 || etype === 0x88a8 || etype === 0x9100) { p.vlan = u16(b, o) & 0x0fff; etype = u16(b, o + 2); o += 4; }
+      } else if (lt === 113) { etype = u16(b, 14); o = 16; }
+      else if (lt === 276) { etype = u16(b, 0); o = 20; }
+      else if (lt === 0 || lt === 108) { const fam = b[0] || b[3]; etype = fam === 2 ? 0x0800 : 0x86dd; o = 4; }
+      else if (lt === 101 || lt === 12 || lt === 14 || lt === 228 || lt === 229) { etype = (b[0] >> 4) === 6 ? 0x86dd : 0x0800; o = 0; }
+      else { p.info = 'Unsupported link type ' + lt; p.unsupported = true; return p; }
+
+      if (etype === 0x0806) {
+        if (b.length < o + 28) throw new Error('short arp');
+        const op = u16(b, o + 6);
+        const a = { op, sha: mac(b, o + 8), spa: ip4(b, o + 14), tha: mac(b, o + 18), tpa: ip4(b, o + 24) };
+        a.gratuitous = a.spa === a.tpa;
+        p.arp = a; p.proto = 'ARP'; p.src = a.spa; p.dst = a.tpa;
+        p.info = op === 1 ? 'Who has ' + a.tpa + '? Tell ' + a.spa : op === 2 ? a.spa + ' is at ' + a.sha + (a.gratuitous ? ' (gratuitous)' : '') : 'ARP op ' + op;
+        return p;
+      }
+      if (etype === 0x0800) {
+        if (b.length < o + 20) throw new Error('short ip');
+        const ihl = (b[o] & 0x0f) * 4; if (ihl < 20) throw new Error('bad ihl');
+        const totalLen = u16(b, o + 2);
+        const ff = u16(b, o + 6);
+        const ip = { v: 4, hdrLen: ihl, totalLen, id: u16(b, o + 4), df: !!(ff & 0x4000), mf: !!(ff & 0x2000), fragOff: ff & 0x1fff, ttl: b[o + 8], proto: b[o + 9] };
+        p.src = ip4(b, o + 12); p.dst = ip4(b, o + 16); p.ip = ip; p.proto = 'IPv4';
+        const end = Math.min(b.length, o + Math.max(totalLen, ihl));
+        o += ihl;
+        if (ip.fragOff > 0) { p.fragment = true; p.info = 'IP fragment offset ' + ip.fragOff * 8; p.proto = protoName(ip.proto); return p; }
+        decodeL4(p, b, o, end, ip.proto);
+        return p;
+      }
+      if (etype === 0x86dd) {
+        if (b.length < o + 40) throw new Error('short ip6');
+        const plen = u16(b, o + 4); let nh = b[o + 6];
+        const ip = { v: 6, ttl: b[o + 7], proto: nh, fragOff: 0, mf: false };
+        p.src = ip6(b, o + 8); p.dst = ip6(b, o + 24); p.ip = ip; p.proto = 'IPv6';
+        const end = Math.min(b.length, o + 40 + plen);
+        o += 40;
+        let guard = 0;
+        while (guard++ < 8 && (nh === 0 || nh === 43 || nh === 60 || nh === 51 || nh === 44 || nh === 135)) {
+          if (o + 8 > end) throw new Error('short ext');
+          const next = b[o];
+          if (nh === 44) { ip.fragOff = u16(b, o + 2) >> 3; ip.mf = !!(b[o + 3] & 1); o += 8; }
+          else if (nh === 51) o += (b[o + 1] + 2) * 4;
+          else o += (b[o + 1] + 1) * 8;
+          nh = next;
+        }
+        ip.proto = nh;
+        if (ip.fragOff > 0) { p.fragment = true; p.info = 'IPv6 fragment'; p.proto = protoName(nh); return p; }
+        decodeL4(p, b, o, end, nh);
+        return p;
+      }
+      p.proto = etype === 0x88cc ? 'LLDP' : etype === 0x8863 || etype === 0x8864 ? 'PPPoE' : etype === 0x888e ? 'EAPOL' : 'Other';
+      p.info = 'Ethertype 0x' + etype.toString(16).padStart(4, '0');
+      if (p.eth) { p.src = p.eth.src; p.dst = p.eth.dst; }
+    } catch (e) {
+      p.malformed = true; p.info = p.info || 'Malformed or truncated packet';
+    }
+    return p;
+  }
+
+  function protoName(n) {
+    return { 1: 'ICMP', 2: 'IGMP', 6: 'TCP', 17: 'UDP', 41: 'IPv6-in-IP', 47: 'GRE', 50: 'ESP', 51: 'AH', 58: 'ICMPv6', 89: 'OSPF', 132: 'SCTP' }[n] || ('IP proto ' + n);
+  }
+
+  function decodeL4(p, b, o, end, proto) {
+    if (proto === 6) {
+      if (end < o + 20) throw new Error('short tcp');
+      const doff = (b[o + 12] >> 4) * 4;
+      const t = { sport: u16(b, o), dport: u16(b, o + 2), seq: u32(b, o + 4), ack: u32(b, o + 8), flags: b[o + 13], win: u16(b, o + 14) };
+      const ps = Math.min(end, o + Math.max(doff, 20));
+      t.payloadLen = Math.max(0, end - ps);
+      t.payload = b.subarray(ps, end);
+      p.tcp = t; p.proto = 'TCP';
+      p.info = t.sport + ' → ' + t.dport + ' [' + flagStr(t.flags) + '] len=' + t.payloadLen;
+      decodeApp(p, t.payload, t.sport, t.dport, true);
+      if (p.app) { p.proto = p.app; if (!p.info.includes('→') && p.app !== 'TLS' && p.app !== 'HTTPS' && p.app !== 'HTTP' && p.app !== 'DNS') p.info = t.sport + ' → ' + t.dport + ' ' + p.info; }
+      return;
+    }
+    if (proto === 17) {
+      if (end < o + 8) throw new Error('short udp');
+      const u = { sport: u16(b, o), dport: u16(b, o + 2), len: u16(b, o + 4) };
+      const pe = Math.min(end, o + Math.max(u.len, 8));
+      u.payload = b.subarray(o + 8, pe); u.payloadLen = u.payload.length;
+      p.udp = u; p.proto = 'UDP';
+      p.info = u.sport + ' → ' + u.dport + ' len=' + u.payloadLen;
+      decodeApp(p, u.payload, u.sport, u.dport, false);
+      if (p.app) p.proto = p.app;
+      return;
+    }
+    if (proto === 1 || proto === 58) {
+      if (end < o + 4) throw new Error('short icmp');
+      const type = b[o], code = b[o + 1];
+      const v6 = proto === 58;
+      const names = v6 ? { 1: 'Destination unreachable', 2: 'Packet too big', 3: 'Time exceeded', 128: 'Echo request', 129: 'Echo reply', 133: 'Router solicitation', 134: 'Router advertisement', 135: 'Neighbor solicitation', 136: 'Neighbor advertisement', 137: 'Redirect' }
+        : { 0: 'Echo reply', 3: 'Destination unreachable', 5: 'Redirect', 8: 'Echo request', 11: 'Time exceeded', 13: 'Timestamp', 30: 'Traceroute' };
+      p.icmp = { v6, type, code, dataLen: Math.max(0, end - o - 8), echo: v6 ? type === 128 : type === 8, reply: v6 ? type === 129 : type === 0, redirect: v6 ? type === 137 : type === 5 };
+      p.proto = v6 ? 'ICMPv6' : 'ICMP';
+      p.info = (names[type] || 'Type ' + type) + (code ? ' code ' + code : '') + (p.icmp.echo || p.icmp.reply ? ' id=' + u16(b, o + 4) + ' seq=' + u16(b, o + 6) : '') + ' (' + p.icmp.dataLen + ' B data)';
+      return;
+    }
+    if (proto === 47) { // GRE
+      try { const flags = u16(b, o); const ptype = u16(b, o + 2); let ho = o + 4; if (flags & 0x8000) ho += 4; if (flags & 0x2000) ho += 4; if (flags & 0x1000) ho += 4;
+        p.proto = 'GRE';
+        if (ptype === 0x0800 && ho + 20 <= end) { p.tunnel = { type: 'GRE', innerSrc: ip4(b, ho + 12), innerDst: ip4(b, ho + 16), innerProto: protoName(b[ho + 9]) }; }
+        else if (ptype === 0x86dd && ho + 40 <= end) { p.tunnel = { type: 'GRE', innerSrc: ip6(b, ho + 8), innerDst: ip6(b, ho + 24), innerProto: protoName(b[ho + 6]) }; }
+        else if (ptype === 0x6558 && ho + 34 <= end) { const et = u16(b, ho + 12); const io = ho + 14; if (et === 0x0800) p.tunnel = { type: 'GRE/Ethernet', innerSrc: ip4(b, io + 12), innerDst: ip4(b, io + 16), innerProto: protoName(b[io + 9]) }; }
+        p.info = 'GRE tunnel' + (p.tunnel ? ' · inner ' + p.tunnel.innerSrc + ' → ' + p.tunnel.innerDst + ' (' + p.tunnel.innerProto + ')' : '');
+        return;
+      } catch (e) { }
+    }
+    p.proto = protoName(proto);
+    p.info = p.proto + ' payload ' + Math.max(0, end - o) + ' B';
+  }
+
+  // ---------------------------------------------------------------- analysis
+  const DEFAULTS = {
+    scanPorts: 15, sweepHosts: 10, synFloodSyns: 100, synFloodSources: 20,
+    beaconMin: 8, beaconScore: 0.7, beaconTiming: 0.75, beaconMinInterval: 2, uaRotation: 4,
+    exfilBytes: 5e6, exfilMinBytes: 1e6, exfilRatio: 10,
+    dnsLongSub: 40, dnsEntropy: 3.9, dnsTunnelQueries: 10, nxdomainMin: 20, nxdomainRatio: 0.3,
+    icmpLarge: 256, icmpLargeCount: 5, bruteConns: 20, lateralHosts: 5, flagAnomalies: 5, spikeFactor: 5, fragCount: 50,
+  };
+  function thresholdsFor(sensitivity) {
+    const f = sensitivity === 'high' ? 0.5 : sensitivity === 'low' ? 2 : 1;
+    const t = Object.assign({}, DEFAULTS);
+    for (const k of ['scanPorts', 'sweepHosts', 'synFloodSyns', 'synFloodSources', 'beaconMin', 'dnsTunnelQueries', 'nxdomainMin', 'icmpLargeCount', 'bruteConns', 'lateralHosts', 'flagAnomalies', 'fragCount']) t[k] = Math.max(3, Math.round(t[k] * f));
+    t.exfilBytes *= f; t.exfilMinBytes *= f;
+    t.beaconMin = sensitivity === 'high' ? 5 : sensitivity === 'low' ? 12 : 8;
+    t.beaconScore = sensitivity === 'high' ? 0.6 : sensitivity === 'low' ? 0.8 : 0.7;
+    t.beaconTiming = sensitivity === 'high' ? 0.6 : sensitivity === 'low' ? 0.8 : 0.7;
+    return t;
+  }
+
+  function inc(map, k, by) { map.set(k, (map.get(k) || 0) + (by === undefined ? 1 : by)); }
+  function top(map, n, sortBy) {
+    const arr = [...map.entries()];
+    arr.sort((a, b) => (sortBy ? sortBy(b[1]) - sortBy(a[1]) : b[1] - a[1]));
+    return arr.slice(0, n);
+  }
+  function pushCap(arr, v, cap) { if (arr.length < (cap || 60)) arr.push(v); }
+  function stats(arr) {
+    const n = arr.length; if (!n) return { mean: 0, sd: 0, cv: 0 };
+    const mean = arr.reduce((a, b) => a + b, 0) / n;
+    const sd = Math.sqrt(arr.reduce((a, b) => a + (b - mean) * (b - mean), 0) / n);
+    return { mean, sd, cv: mean ? sd / mean : 0 };
+  }
+  function median(arr) { if (!arr.length) return 0; const s = [...arr].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+
+  function analyze(pkts, capture, options) {
+    const T = thresholdsFor(options && options.sensitivity);
+    const findings = [];
+    const n = pkts.length;
+    const st = { packets: n, bytes: 0, captured: 0, start: n ? pkts[0].ts : 0, end: n ? pkts[n - 1].ts : 0, protocols: new Map(), hosts: new Map(), convs: new Map(), dstPorts: new Map(), dnsDomains: new Map(), sni: new Map(), httpHosts: new Map(), malformed: 0, truncated: 0, fragments: 0, arp: 0, macs: new Map(), internalHosts: 0, externalHosts: 0 };
+    for (let i = 0; i < n; i++) { if (pkts[i].ts < st.start) st.start = pkts[i].ts; if (pkts[i].ts > st.end) st.end = pkts[i].ts; }
+    const duration = Math.max(0, st.end - st.start);
+    st.duration = duration;
+
+    const flows = new Map();          // src>dst:dport/proto
+    const ipMacs = new Map();          // ip -> Map(mac -> count)
+    const arpReq = new Map();          // "requester|target" -> last ts
+    const arpUnsolicited = new Map();  // sha -> {count, victims:Set, claims:Set, idx:[]}
+    const arpGrat = new Map();         // sha -> {count, idx}
+    const arpScan = new Map();         // sha -> {targets:Set, idx, count}
+    const dnsBySrc = new Map();        // src -> {queries, byDomain:Map, nx:0, responses:0, nxNames:Set, nxIdx}
+    const icmpBySrc = new Map();       // src -> {echoTargets:Set, large:0, largeIdx, idx}
+    const redirects = []; const ra = new Map();
+    const flagAnom = new Map();        // src -> {count, kinds:Map, idx}
+    const creds = new Map();           // key -> {proto,src,dst,user,idx}
+    const oddPort = new Map();         // key -> {...}
+    const fragBySrc = new Map();
+    const ttlBySrc = new Map();
+    const unsupported = { count: 0, lt: null };
+    const perSec = new Map();
+    // connection-level state for the beaconing engine
+    const conns = new Map();           // "src:sport>dst:dport/proto" -> conn
+    const dnsQ = new Map();            // "src|basedomain" -> {ts, subs, types, idx}
+    const dnsAnswerIPs = new Set();    // every IP handed out in a DNS answer
+    const domainIPs = new Map();       // basedomain -> {ips:Set, minTtl}
+    const uaBySrc = new Map();         // src -> Map(ua -> count)
+    const ja3BySrc = new Map();        // src -> Map(ja3 -> count)
+    const uriBySrcHost = new Map();    // src|host -> {uris:Set, reqs, idx, c2:Map, cs8:0, oldUa:Set, encPosts:0}
+    const objects = [];                // carved transferred files
+    const credExposed = [];            // captured credential material (NTLM/Kerberos/cleartext)
+    const krbBySrc = new Map();        // src -> {asreq, tgs, rc4, noPreauth, realms:Set, idx}
+    const assets = new Map();          // ip -> {names:Set, os:Set, sources:Set}
+    const smbLateral = new Map();      // src|dst -> {pipes:Set, shares:Set, idx, writes}
+    const httpConnect = [];            // CONNECT tunnels
+    const dohBySrc = new Map();        // src -> {hits, idx, servers:Set}
+    const certByKey = new Map();       // conn key -> cert IoC
+    const ja4BySrc = new Map();        // src -> Map(ja4 -> count)
+    const inboundSrv = new Map();      // "intIP:port" -> {ext:Set, bytes, idx, proto} internal host serving external peers
+    const secretsHit = new Map();      // key -> {kind, src, dst, sample, count, idx}
+    const dhcpServers = new Map();     // serverIP -> count
+    const ja3sBySrv = new Map();       // "dst" -> Set(ja3s)
+    const tlsOld = new Map();          // key -> {src,dst,sni,ver,idx}
+    const snmpCommunity = new Map();   // key -> {src,dst,community,version,count,idx}
+    let carveBudget = 24 * 1024 * 1024; // global cap on bytes buffered for file carving
+    const SECRET_PATTERNS = [
+      [/AKIA[0-9A-Z]{16}/, 'AWS access key ID'],
+      [/-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/, 'private key'],
+      [/xox[baprs]-[0-9A-Za-z-]{10,}/, 'Slack token'],
+      [/gh[pousr]_[0-9A-Za-z]{30,}/, 'GitHub token'],
+      [/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, 'JWT'],
+      [/[Aa]uthorization:\s*Bearer\s+[A-Za-z0-9._-]{20,}/, 'Bearer token'],
+      [/(?:password|passwd|pwd)=([^&\s"']{3,40})/i, 'password in parameter'],
+    ];
+    function luhnOk(s) { let sum = 0, alt = false; for (let i = s.length - 1; i >= 0; i--) { let d = +s[i]; if (alt) { d *= 2; if (d > 9) d -= 9; } sum += d; alt = !alt; } return sum % 10 === 0; }
+    function scanSecrets(text, src, dst, proto, pn) {
+      if (!text) return;
+      for (const [re, kind] of SECRET_PATTERNS) { const m = re.exec(text); if (m) addSecret(kind, src, dst, proto, (m[1] || m[0]).slice(0, 24), pn); }
+      const cc = text.match(/\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b/g);
+      if (cc) for (const c of cc) if (luhnOk(c)) { addSecret('payment card number', src, dst, proto, c.slice(0, 6) + '…' + c.slice(-4), pn); break; }
+    }
+    function addSecret(kind, src, dst, proto, sample, pn) { const k = kind + '|' + src + '|' + dst; let e = secretsHit.get(k); if (!e) { if (secretsHit.size >= 100) return; e = { kind, src, dst, proto, sample, count: 0, idx: [] }; secretsHit.set(k, e); } e.count++; pushCap(e.idx, pn, 20); }
+    function asset(ip, name, os, source) { if (!ip || !isPrivate(ip)) return; let a = assets.get(ip); if (!a) { a = { ip, names: new Set(), os: new Set(), sources: new Set() }; assets.set(ip, a); } if (name) a.names.add(name.slice(0, 64)); if (os) a.os.add(os); if (source) a.sources.add(source); }
+    function newConn(src, sport, dst, dport, proto, ts, implicit) {
+      const c = { src, sport, dst, dport, proto, start: ts, last: ts, cBytes: 0, sBytes: 0, cPkts: 0, sPkts: 0, bursts: [], lastCData: -Infinity, sni: null, host: null, ja3: null, ja4: null, alpn: null, ciphers: 0, implicit: !!implicit, uris: 0, idx: [], carve: false, rbuf: null, rbytes: 0, req: null, sbuf: null, sbytes: 0, certDone: false,
+        hc: { cNext: null, sNext: null, cAck: null, sAck: null, synTs: 0, synackTs: 0, rtt: null, dataPkts: 0, retrans: 0, ooo: 0, dupAck: 0, zwin: 0, rst: 0, fin: 0 } };
+      conns.set(src + ':' + sport + '>' + dst + ':' + dport + '/' + proto, c);
+      return c;
+    }
+    function tcpHealth(c, fromClient, t, flags, ts) {
+      const h = c.hc; const d = fromClient ? 'c' : 's'; const nF = d + 'Next', aF = d + 'Ack';
+      if (flags & 0x04) { h.rst++; return; }
+      if ((flags & 0x02) && fromClient && !(flags & 0x10)) { h.cNext = (t.seq + 1) >>> 0; h.synTs = ts; return; }
+      if ((flags & 0x12) === 0x12 && !fromClient) { h.sNext = (t.seq + 1) >>> 0; h.synackTs = ts; if (h.synTs && h.rtt == null) h.rtt = ts - h.synTs; return; }
+      if (flags & 0x01) h.fin++;
+      if (t.win === 0 && !(flags & 0x02)) h.zwin++;
+      if (t.payloadLen > 0) {
+        h.dataPkts++;
+        if (h[nF] == null) h[nF] = (t.seq + t.payloadLen) >>> 0;
+        else { const diff = (t.seq - h[nF]) >>> 0; if (diff === 0) h[nF] = (t.seq + t.payloadLen) >>> 0; else if (diff < 0x80000000) { h.ooo++; h[nF] = (t.seq + t.payloadLen) >>> 0; } else h.retrans++; }
+      } else if ((flags & 0x10) && !(flags & 0x02) && !(flags & 0x01)) {
+        if (h[aF] != null && h[aF] === t.ack) h.dupAck++; h[aF] = t.ack;
+      }
+    }
+    function findConn(p, sport, dport, proto) {
+      const a = conns.get(p.src + ':' + sport + '>' + p.dst + ':' + dport + '/' + proto);
+      if (a) return { c: a, fromClient: true };
+      const b = conns.get(p.dst + ':' + dport + '>' + p.src + ':' + sport + '/' + proto);
+      if (b) return { c: b, fromClient: false };
+      return null;
+    }
+    function touchConn(r, p, payloadLen) {
+      const c = r.c; c.last = p.ts; pushCap(c.idx, p.n, 30);
+      if (r.fromClient) { c.cPkts++; c.cBytes += p.len; if (payloadLen > 0) { if (p.ts - c.lastCData > 1) c.bursts.push(p.ts); c.lastCData = p.ts; } }
+      else { c.sPkts++; c.sBytes += p.len; }
+    }
+
+    function host(ip) { let h = st.hosts.get(ip); if (!h) { h = { ip, pkts: 0, bytesOut: 0, bytesIn: 0, first: Infinity, last: 0, internal: isPrivate(ip), macs: new Set(), dnsQueries: 0, findings: 0 }; st.hosts.set(ip, h); } return h; }
+    function flow(src, dst, port, proto) {
+      const k = src + '>' + dst + ':' + port + '/' + proto;
+      let f = flows.get(k);
+      if (!f) { f = { src, dst, dport: port, proto, syn: 0, synack: 0, rst: 0, fin: 0, pkts: 0, bytes: 0, starts: [], conns: [], first: Infinity, last: 0, idx: [], established: false }; flows.set(k, f); }
+      return f;
+    }
+    function bytesIndexOf(b, sig, max) { const L = sig.length, lim = Math.min(b.length, max || b.length) - L; for (let i = 0; i <= lim; i++) { let ok = true; for (let j = 0; j < L; j++) if (b[i + j] !== sig.charCodeAt(j)) { ok = false; break; } if (ok) return i; } return -1; }
+    function ntlmUser(b, ix) { try { const u16le = o => b[ix + o] | (b[ix + o + 1] << 8); const u32le = o => (b[ix + o] | (b[ix + o + 1] << 8) | (b[ix + o + 2] << 16) | (b[ix + o + 3] << 24)) >>> 0; const rd = (ofs, len) => { let s = ''; for (let i = 0; i + 1 < len; i += 2) { const c = b[ix + ofs + i]; if (c >= 32 && c < 127) s += String.fromCharCode(c); } return s; }; const dl = u16le(28), dofs = u32le(32), ul = u16le(36), uofs = u32le(40); const dom = dl && ix + dofs + dl <= b.length ? rd(dofs, dl) : ''; const usr = ul && ix + uofs + ul <= b.length ? rd(uofs, ul) : ''; return ((dom ? dom + '\\' : '') + usr) || null; } catch (e) { return null; } }
+    const SMB_PIPES = ['svcctl', 'atsvc', 'winreg', 'samr', 'lsarpc', 'srvsvc', 'spoolss', 'epmapper', 'eventlog', 'netlogon', 'drsuapi', 'wkssvc'];
+    const PIPE_MEANING = { svcctl: 'service control (PsExec-style)', atsvc: 'task scheduler', winreg: 'remote registry', samr: 'account enumeration', lsarpc: 'LSA / policy', srvsvc: 'share enumeration', spoolss: 'print spooler (PrintNightmare)', drsuapi: 'directory replication (DCSync)', netlogon: 'netlogon (Zerologon)' };
+    const SMB_SHARES = ['ADMIN$', 'IPC$', 'C$'];
+    function scanTcpPayload(p, t, fromClient) {
+      const pl = t.payload; if (!pl || !pl.length) return;
+      const dport = t.dport, sport = t.sport;
+      const cli = fromClient ? p.src : p.dst, srv = fromClient ? p.dst : p.src;
+      if (dport === 445 || sport === 445 || dport === 139 || sport === 139 || dport === 80 || dport === 8080 || dport === 389 || sport === 389 || dport === 1433 || sport === 1433) {
+        const ix = bytesIndexOf(pl, NTLM_SIG, 2048);
+        if (ix >= 0 && ix + 12 <= pl.length && pl[ix + 8] === 3) {
+          const port = Math.min(sport, dport);
+          addCredObj({ proto: 'NTLM', scheme: 'Net-NTLMv2 (' + (port === 445 || port === 139 ? 'SMB' : port === 389 ? 'LDAP' : port === 1433 ? 'MSSQL' : 'HTTP') + ')', src: cli, dst: srv, user: ntlmUser(pl, ix), n: p.n });
+        }
+      }
+      if (dport === 445 || sport === 445 || dport === 139 || sport === 139) {
+        const a = ascii(pl, 0, Math.min(pl.length, 1400)); const low = a.toLowerCase(); const key = cli + '|' + srv; let g = smbLateral.get(key);
+        const ensure = () => { if (!g) { g = { src: cli, dst: srv, pipes: new Set(), shares: new Set(), idx: [], writes: 0 }; smbLateral.set(key, g); } return g; };
+        for (const pipe of SMB_PIPES) if (low.includes('\\pipe\\' + pipe) || low.includes(pipe + '\u0000') || a.includes('\\' + pipe)) { ensure().pipes.add(pipe); pushCap(g.idx, p.n, 30); }
+        for (const sh of SMB_SHARES) if (a.includes('\\' + sh) || a.includes(sh + '\u0000')) { ensure().shares.add(sh); pushCap(g.idx, p.n, 30); }
+      }
+    }
+
+    for (let i = 0; i < n; i++) {
+      const p = pkts[i];
+      st.bytes += p.len; st.captured += p.caplen;
+      inc(st.protocols, p.proto);
+      if (p.malformed) st.malformed++;
+      if (p.truncated) st.truncated++;
+      if (p.unsupported) { unsupported.count++; unsupported.lt = p.info; continue; }
+      const rel = p.ts - st.start;
+      inc(perSec, Math.floor(rel));
+      if (p.eth) { inc(st.macs, p.eth.src); }
+
+      if (p.arp) {
+        st.arp++;
+        const a = p.arp;
+        if (a.spa !== '0.0.0.0' && a.sha !== 'ff:ff:ff:ff:ff:ff' && a.sha !== '00:00:00:00:00:00') {
+          let m = ipMacs.get(a.spa); if (!m) { m = new Map(); ipMacs.set(a.spa, m); }
+          let e = m.get(a.sha); if (!e) { e = { count: 0, idx: [] }; m.set(a.sha, e); }
+          e.count++; pushCap(e.idx, p.n, 20);
+        }
+        if (a.op === 1) {
+          arpReq.set(a.spa + '|' + a.tpa, p.ts);
+          let s = arpScan.get(a.sha); if (!s) { s = { targets: new Set(), idx: [], count: 0, ip: a.spa }; arpScan.set(a.sha, s); }
+          s.targets.add(a.tpa); s.count++; pushCap(s.idx, p.n);
+        } else if (a.op === 2) {
+          if (a.gratuitous) { let g = arpGrat.get(a.sha); if (!g) { g = { count: 0, idx: [], ip: a.spa }; arpGrat.set(a.sha, g); } g.count++; pushCap(g.idx, p.n); }
+          else {
+            const t = arpReq.get(a.tpa + '|' + a.spa);
+            if (t === undefined || p.ts - t > 10) {
+              let u = arpUnsolicited.get(a.sha); if (!u) { u = { count: 0, victims: new Set(), claims: new Set(), idx: [] }; arpUnsolicited.set(a.sha, u); }
+              u.count++; u.victims.add(a.tpa); u.claims.add(a.spa); pushCap(u.idx, p.n);
+            }
+          }
+        }
+        continue;
+      }
+      if (!p.ip) continue;
+
+      const hs = host(p.src), hd = host(p.dst);
+      hs.pkts++; hs.bytesOut += p.len; hd.bytesIn += p.len;
+      if (p.ts < hs.first) hs.first = p.ts; if (p.ts > hs.last) hs.last = p.ts;
+      if (p.ts < hd.first) hd.first = p.ts; if (p.ts > hd.last) hd.last = p.ts;
+      if (p.eth) { hs.macs.add(p.eth.src); }
+      if (!isPrivate(p.src) || !isPrivate(p.dst)) { /* mixed */ }
+      { let t = ttlBySrc.get(p.src); if (!t) { t = new Map(); ttlBySrc.set(p.src, t); } inc(t, p.ip.ttl); }
+
+      const ck = p.src < p.dst ? p.src + '|' + p.dst : p.dst + '|' + p.src;
+      let c = st.convs.get(ck);
+      if (!c) { const [a, b] = ck.split('|'); c = { a, b, pkts: 0, bytes: 0, bytesAB: 0, bytesBA: 0, first: p.ts, last: p.ts, protos: new Set(), ports: new Set() }; st.convs.set(ck, c); }
+      c.pkts++; c.bytes += p.len; if (p.src === c.a) c.bytesAB += p.len; else c.bytesBA += p.len;
+      c.last = p.ts; c.protos.add(p.proto);
+
+      if (p.fragment || (p.ip.mf)) { st.fragments++; let f = fragBySrc.get(p.src); if (!f) { f = { count: 0, idx: [] }; fragBySrc.set(p.src, f); } f.count++; pushCap(f.idx, p.n); if (p.fragment) continue; }
+
+      if (p.tcp) {
+        const t = p.tcp; const f6 = t.flags & 0x3f;
+        c.ports.add(t.dport);
+        if (f6 === 0x02) { // SYN
+          const f = flow(p.src, p.dst, t.dport, 'tcp');
+          f.syn++; f.pkts++; f.bytes += p.len; pushCap(f.idx, p.n); if (p.ts < f.first) f.first = p.ts; f.last = p.ts;
+          inc(st.dstPorts, 'tcp/' + t.dport);
+          const existing = conns.get(p.src + ':' + t.sport + '>' + p.dst + ':' + t.dport + '/tcp');
+          if (!existing || p.ts - existing.last > 60) { const c = newConn(p.src, t.sport, p.dst, t.dport, 'tcp', p.ts); c.cPkts = 1; c.cBytes = p.len; pushCap(c.idx, p.n, 30); f.starts.push(p.ts); f.conns.push(c); tcpHealth(c, true, t, f6, p.ts); }
+          else { pushCap(existing.idx, p.n, 30); tcpHealth(existing, true, t, f6, p.ts); } // SYN retransmit
+        } else {
+          if (f6 === 0x12) { const f = flow(p.dst, p.src, t.sport, 'tcp'); f.synack++; f.established = true; pushCap(f.idx, p.n); }
+          else if (f6 & 0x04) { const f = flows.get(p.dst + '>' + p.src + ':' + t.sport + '/tcp'); if (f) { f.rst++; pushCap(f.idx, p.n); } }
+          // attribute data to the client-side flow when one exists
+          const fa = flows.get(p.src + '>' + p.dst + ':' + t.dport + '/tcp'); const fb = flows.get(p.dst + '>' + p.src + ':' + t.sport + '/tcp');
+          const f = fa || fb; if (f) { f.pkts++; f.bytes += p.len; f.last = p.ts; }
+          let r = findConn(p, t.sport, t.dport, 'tcp');
+          if (!r && t.payloadLen > 0) { // connection began before the capture: guess the client as the high-port side
+            const clientIsSrc = t.sport > t.dport || fa;
+            const c = clientIsSrc ? newConn(p.src, t.sport, p.dst, t.dport, 'tcp', p.ts, true) : newConn(p.dst, t.dport, p.src, t.sport, 'tcp', p.ts, true);
+            const ff = flow(c.src, c.dst, c.dport, 'tcp'); ff.conns.push(c); ff.pkts++; ff.bytes += p.len; if (p.ts < ff.first) ff.first = p.ts; ff.last = p.ts;
+            r = { c, fromClient: clientIsSrc };
+          }
+          if (r) {
+            touchConn(r, p, t.payloadLen);
+            tcpHealth(r.c, r.fromClient, t, f6, p.ts);
+            const c = r.c;
+            if (r.fromClient && p.tls && p.tls.clientHello) { c.sni = p.tls.sni; c.ja3 = p.tls.ja3; c.alpn = p.tls.alpn; c.ciphers = p.tls.ciphers; if (p.tls.ja3) { let m = ja3BySrc.get(p.src); if (!m) { m = new Map(); ja3BySrc.set(p.src, m); } inc(m, p.tls.ja3); } }
+            if (r.fromClient && p.http && !p.http.response) {
+              const h = p.http; c.host = h.host ? h.host.split(':')[0] : c.host; c.uris++;
+              if (h.ua) { let m = uaBySrc.get(p.src); if (!m) { m = new Map(); uaBySrc.set(p.src, m); } inc(m, h.ua); }
+              const uk = p.src + '|' + (c.host || p.dst);
+              let u = uriBySrcHost.get(uk); if (!u) { u = { src: p.src, host: c.host || p.dst, dst: p.dst, uris: new Set(), reqs: 0, idx: [], c2: new Map(), cs8: 0, oldUa: new Set(), encPosts: 0, randomSeg: 0 }; uriBySrcHost.set(uk, u); }
+              u.reqs++; u.uris.add(h.path.slice(0, 120)); pushCap(u.idx, p.n, 40);
+              for (const [re, label] of C2_URIS) if (re.test(h.path)) { inc(u.c2, label); break; }
+              const cs = checksum8(h.path); if (cs === 92 || cs === 93) u.cs8++;
+              if (h.ua && OLD_UA.test(h.ua)) u.oldUa.add(h.ua);
+              if (h.method === 'POST' && h.bodyEntropy >= 7.0) u.encPosts++;
+              const seg = h.path.split('?')[0].split('/').filter(Boolean).pop() || ''; const segClean = seg.replace(/\.[a-z0-9]{1,5}$/i, ''); if (segClean.length >= 8 && entropy(segClean) >= 3.5 && !/^[a-z]+$/i.test(segClean)) u.randomSeg++;
+              c.carve = true; c.req = { method: h.method, path: h.path, host: c.host || p.dst };
+              if (h.method === 'CONNECT') pushCap(httpConnect, { n: p.n, src: p.src, dst: p.dst, target: h.path }, 40);
+              scanSecrets(h.path + ' ' + (h.auth || '') + ' ' + ascii(p.tcp.payload, 0, Math.min(p.tcp.payload.length, 3072)), p.src, p.dst, 'HTTP', p.n);
+            }
+            if (r.fromClient && p.tls && p.tls.clientHello && p.tls.ja4) { c.ja4 = p.tls.ja4; let m = ja4BySrc.get(p.src); if (!m) { m = new Map(); ja4BySrc.set(p.src, m); } inc(m, p.tls.ja4); }
+            // accumulate server→client bytes for file carving and TLS certificate extraction
+            if (!r.fromClient && t.payloadLen > 0) {
+              const pl = t.payload;
+              if (c.carve && carveBudget > 0 && c.rbytes < 1048576) { const take = Math.min(pl.length, 1048576 - c.rbytes, carveBudget); if (take > 0) { (c.rbuf || (c.rbuf = [])).push(pl.subarray(0, take)); c.rbytes += take; carveBudget -= take; } }
+              if (!c.certDone && c.sbytes < 32768 && (c.sni || TLS_PORTS.has(c.dport)) && (c.sbuf || pl[0] === 0x16)) { const take = Math.min(pl.length, 32768 - c.sbytes); (c.sbuf || (c.sbuf = [])).push(pl.subarray(0, take)); c.sbytes += take; }
+            }
+            if (t.payloadLen > 0) scanTcpPayload(p, t, r.fromClient);
+          }
+          if (f6 === 0x00 || f6 === 0x29 || f6 === 0x03 || f6 === 0x06 || f6 === 0x01 || f6 === 0x2b) {
+            const kind = f6 === 0 ? 'NULL (no flags)' : f6 === 0x29 ? 'XMAS (FIN,PSH,URG)' : f6 === 0x03 ? 'SYN+FIN' : f6 === 0x06 ? 'SYN+RST' : f6 === 0x01 ? 'FIN without ACK' : 'FIN,PSH,URG,ACK';
+            let a = flagAnom.get(p.src); if (!a) { a = { count: 0, kinds: new Map(), targets: new Set(), idx: [] }; flagAnom.set(p.src, a); }
+            a.count++; inc(a.kinds, kind); a.targets.add(p.dst); pushCap(a.idx, p.n);
+          }
+        }
+        if (p.http && !p.http.response) {
+          if (p.http.host) inc(st.httpHosts, p.http.host.split(':')[0]);
+          if (!HTTP_PORTS.has(t.dport)) addOdd('HTTP', p, t.dport);
+          if (p.http.auth && /^basic /i.test(p.http.auth)) {
+            let user = null; try { user = (typeof atob === 'function' ? atob(p.http.auth.slice(6).trim()) : Buffer.from(p.http.auth.slice(6).trim(), 'base64').toString()).split(':')[0]; } catch (e) { }
+            addCred('HTTP Basic auth', p, user, t.dport);
+          }
+        }
+        if (p.tls && p.tls.clientHello) {
+          if (p.tls.sni) { inc(st.sni, p.tls.sni); if (DOH_HOSTS.includes(p.tls.sni.toLowerCase())) { let g = dohBySrc.get(p.src); if (!g) { g = { hits: 0, idx: [], servers: new Set() }; dohBySrc.set(p.src, g); } g.hits++; g.servers.add(p.tls.sni); pushCap(g.idx, p.n, 30); } }
+          if (!TLS_PORTS.has(t.dport)) addOdd('TLS', p, t.dport);
+        }
+        if (p.app === 'SSH' && t.dport !== 22 && t.dport !== 2222 && p.info.startsWith('SSH-')) addOdd('SSH', p, t.dport);
+        if (p.cred) addCred(p.cred.proto, p, p.cred.user, t.dport);
+        // Kerberos (TCP 88)
+        if (t.dport === 88 || t.sport === 88) scanKerberos(p, t.payload, t.dport === 88, true);
+      } else if (p.udp) {
+        const u = p.udp; c.ports.add(u.dport);
+        let r = findConn(p, u.sport, u.dport, 'udp');
+        if (r && p.ts - r.c.last > 10) { r = null; } // idle gap: treat as a new session
+        if (!r) {
+          const serverReply = u.sport === 53 || u.sport === 123 || u.sport === 5353 || u.sport === 1900 || (u.sport < 1024 && u.dport >= 1024);
+          const cs = serverReply ? p.dst : p.src, csp = serverReply ? u.dport : u.sport, cd = serverReply ? p.src : p.dst, cdp = serverReply ? u.sport : u.dport;
+          const cc = newConn(cs, csp, cd, cdp, 'udp', p.ts, serverReply);
+          r = { c: cc, fromClient: !serverReply };
+          const f = flow(cs, cd, cdp, 'udp'); f.conns.push(cc); if (!serverReply) { f.starts.push(p.ts); inc(st.dstPorts, 'udp/' + u.dport); }
+          if (p.ts < f.first) f.first = p.ts;
+        }
+        touchConn(r, p, u.payloadLen);
+        { const f = flow(r.c.src, r.c.dst, r.c.dport, 'udp'); f.pkts++; f.bytes += p.len; f.last = p.ts; pushCap(f.idx, p.n); }
+        if (u.dport === 88 || u.sport === 88) scanKerberos(p, u.payload, u.dport === 88, false);
+        if ((u.dport === 67 || u.dport === 68 || u.sport === 67 || u.sport === 68) && u.payload) { scanDhcp(p, u.payload); if (u.sport === 67) inc(dhcpServers, p.src); }
+        if ((u.dport === 161 || u.dport === 162 || u.sport === 161) && u.payload) scanSnmp(p, u.payload, u.dport === 161 || u.dport === 162);
+      }
+
+      if (p.dns) {
+        const d = p.dns;
+        if (!d.qr) {
+          hs.dnsQueries++;
+          let s = dnsBySrc.get(p.src); if (!s) { s = { queries: 0, byDomain: new Map(), nx: 0, responses: 0, nxNames: new Set(), nxIdx: [], servers: new Set() }; dnsBySrc.set(p.src, s); }
+          s.queries++; s.servers.add(p.dst);
+          const q = d.questions[0];
+          if (q && q.name) {
+            const bd = baseDomain(q.name); inc(st.dnsDomains, bd);
+            const sub = q.name.length > bd.length ? q.name.slice(0, q.name.length - bd.length - 1) : '';
+            const subClean = sub.replace(/\./g, '');
+            let e = s.byDomain.get(bd); if (!e) { e = { count: 0, suspicious: 0, totalSub: 0, maxSub: 0, types: new Map(), idx: [], sample: null, bytes: 0, ent: 0 }; s.byDomain.set(bd, e); }
+            e.count++; e.totalSub += sub.length; e.bytes += p.len; if (sub.length > e.maxSub) e.maxSub = sub.length; inc(e.types, QTYPES[q.type] || q.type);
+            const ent = subClean.length >= 16 ? entropy(subClean) : 0;
+            if (sub.length >= T.dnsLongSub || ent >= T.dnsEntropy || ((q.type === 16 || q.type === 10) && sub.length >= 20)) { e.suspicious++; e.ent += ent; pushCap(e.idx, p.n); if (!e.sample) e.sample = q.name; }
+            if (!(p.udp && (p.udp.dport === 5353 || p.udp.dport === 5355))) {
+              const qk = p.src + '|' + bd; let g = dnsQ.get(qk); if (!g) { g = { src: p.src, domain: bd, server: p.dst, ts: [], subs: new Set(), types: new Map(), idx: [] }; dnsQ.set(qk, g); }
+              g.ts.push(p.ts); g.subs.add(sub); inc(g.types, QTYPES[q.type] || q.type); pushCap(g.idx, p.n, 60);
+            }
+          }
+        } else {
+          let s = dnsBySrc.get(p.dst); if (!s) { s = { queries: 0, byDomain: new Map(), nx: 0, responses: 0, nxNames: new Set(), nxIdx: [], servers: new Set() }; dnsBySrc.set(p.dst, s); }
+          s.responses++;
+          if (d.rcode === 3) { s.nx++; const q = d.questions[0]; if (q) s.nxNames.add(q.name); pushCap(s.nxIdx, p.n); }
+          for (const a of d.answers) if ((a.type === 1 || a.type === 28) && a.data) {
+            dnsAnswerIPs.add(a.data);
+            const bd = baseDomain(a.name || (d.questions[0] ? d.questions[0].name : '')); let di = domainIPs.get(bd); if (!di) { di = { ips: new Set(), minTtl: Infinity, answers: 0 }; domainIPs.set(bd, di); } di.ips.add(a.data); di.answers++; if (a.ttl < di.minTtl) di.minTtl = a.ttl;
+          }
+        }
+      }
+
+      if (p.icmp) {
+        let s = icmpBySrc.get(p.src); if (!s) { s = { echoTargets: new Set(), large: 0, largeIdx: [], echoIdx: [], maxData: 0 }; icmpBySrc.set(p.src, s); }
+        if (p.icmp.echo) { s.echoTargets.add(p.dst); pushCap(s.echoIdx, p.n); }
+        if (p.icmp.echo && p.icmp.dataLen >= T.icmpLarge) { s.large++; pushCap(s.largeIdx, p.n); if (p.icmp.dataLen > s.maxData) s.maxData = p.icmp.dataLen; }
+        if (p.icmp.redirect) pushCap(redirects, { n: p.n, src: p.src, dst: p.dst }, 50);
+        if (p.icmp.v6 && p.icmp.type === 134) { let r = ra.get(p.src); if (!r) { r = { count: 0, idx: [] }; ra.set(p.src, r); } r.count++; pushCap(r.idx, p.n); }
+      }
+    }
+
+    function addOdd(proto, p, port) {
+      const k = proto + '|' + p.src + '|' + p.dst + '|' + port;
+      let e = oddPort.get(k); if (!e) { e = { proto, src: p.src, dst: p.dst, port, count: 0, idx: [], detail: p.info }; oddPort.set(k, e); }
+      e.count++; pushCap(e.idx, p.n);
+    }
+    function addCred(proto, p, user, port) {
+      const k = proto + '|' + p.src + '|' + p.dst + '|' + port;
+      let e = creds.get(k); if (!e) { e = { proto, src: p.src, dst: p.dst, port, users: new Set(), count: 0, idx: [] }; creds.set(k, e); }
+      e.count++; if (user) e.users.add(user); pushCap(e.idx, p.n);
+    }
+    function addCredObj(o) { const k = o.scheme + '|' + o.src + '|' + o.dst; let e = credExposed.find(x => x.key === k); if (!e) { e = { key: k, proto: o.proto, scheme: o.scheme, src: o.src, dst: o.dst, users: new Set(), count: 0, idx: [] }; if (credExposed.length < 200) credExposed.push(e); else return; } e.count++; if (o.user) e.users.add(o.user); pushCap(e.idx, o.n, 40); }
+    function scanKerberos(p, pl, toServer, tcp) {
+      if (!pl || !pl.length) return;
+      const cli = toServer ? p.src : p.dst, srv = toServer ? p.dst : p.src;
+      let g = krbBySrc.get(cli); if (!g) { g = { asreq: 0, tgs: 0, rc4: 0, idx: [], dst: srv, srvs: new Set() }; krbBySrc.set(cli, g); }
+      g.srvs.add(srv);
+      if (toServer) {
+        pushCap(g.idx, p.n, 50); let tag = 0; const lim = Math.min(pl.length, tcp ? 12 : 8);
+        for (let k = 0; k < lim; k++) { if (pl[k] === 0x6a) { tag = 0x6a; break; } if (pl[k] === 0x6c) { tag = 0x6c; break; } }
+        if (tag === 0x6c) g.tgs++; else if (tag === 0x6a) g.asreq++;
+        if (bytesIndexOf(pl, '\x02\x01\x17', Math.min(pl.length, 600)) >= 0) g.rc4++;
+      }
+    }
+    function scanSnmp(p, pl, toServer) {
+      // SNMP v1/v2c: SEQUENCE { version INTEGER, community OCTET STRING, ... }
+      try { if (pl[0] !== 0x30) return; let o = 2; if ((pl[1] & 0x80)) o = 2 + (pl[1] & 0x7f); if (pl[o] !== 0x02) return; const vlen = pl[o + 1]; const version = pl[o + 2]; o += 2 + vlen; if (version > 1) return; if (pl[o] !== 0x04) return; const clen = pl[o + 1]; const community = ascii(pl, o + 2, Math.min(pl.length, o + 2 + clen)); const src = toServer ? p.src : p.dst, dst = toServer ? p.dst : p.src; const k = src + '|' + dst + '|' + community; let e = snmpCommunity.get(k); if (!e) { e = { src, dst, community, version: version === 0 ? 'v1' : 'v2c', count: 0, idx: [] }; snmpCommunity.set(k, e); } e.count++; pushCap(e.idx, p.n, 20); } catch (e) { }
+    }
+    function scanDhcp(p, pl) {
+      // DHCP: find magic cookie 63 82 53 63 then walk options; 12 = host name, 60 = vendor class
+      let o = bytesIndexOf(pl, '\x63\x82\x53\x63', pl.length); if (o < 0) return; o += 4;
+      let host = null, vendor = null, guard = 0;
+      while (o + 1 < pl.length && guard++ < 60) { const opt = pl[o]; if (opt === 255) break; if (opt === 0) { o++; continue; } const len = pl[o + 1]; const v = ascii(pl, o + 2, Math.min(pl.length, o + 2 + len)); if (opt === 12) host = v; else if (opt === 60) vendor = v; o += 2 + len; }
+      // the client is whichever side is on a private address
+      const ip = isPrivate(p.src) && p.src !== '0.0.0.0' ? p.src : (isPrivate(p.dst) ? p.dst : null);
+      if (ip && host) asset(ip, host, vendor && /msft|windows/i.test(vendor) ? 'Windows' : vendor && /android/i.test(vendor) ? 'Android' : vendor && /dhcpcd|udhcp/i.test(vendor) ? 'Linux/embedded' : null, 'DHCP');
+    }
+
+    for (const h of st.hosts.values()) { if (h.internal) st.internalHosts++; else st.externalHosts++; }
+    const hasExternal = st.externalHosts > 0 && st.internalHosts > 0;
+
+    const disabledCats = new Set((options && options.disabled) || []);
+    const allow = (options && options.allow) || {};
+    const allowIps = new Set(allow.ips || []), allowDoms = (allow.domains || []).map(d => d.toLowerCase()).filter(Boolean), allowJa3 = new Set(allow.ja3 || []);
+    function isAllowed(f) {
+      const hosts = (f.hosts || []).filter(Boolean);
+      if (f.category === 'IOC match') return false; // never suppress an explicit watchlist hit
+      if (allowIps.size && hosts.some(h => allowIps.has(h))) return true;
+      if (allowDoms.length) { const t = (f.title + ' ' + f.summary).toLowerCase(); if (allowDoms.some(d => t.includes(d))) return true; }
+      if (allowJa3.size && f.evidence) { for (const e of f.evidence) if (e[0] === 'JA3' && allowJa3.has(e[1])) return true; }
+      return false;
+    }
+    function add(f) {
+      if (disabledCats.has(f.category)) return;
+      if (isAllowed(f)) return;
+      f.id = findings.length + 1;
+      f.attack = attackFor(f.category, f.title);
+      f.packets = f.packets || [];
+      f.hosts = f.hosts || [];
+      for (const h of f.hosts) { const hh = st.hosts.get(h); if (hh) hh.findings++; }
+      findings.push(f);
+    }
+
+    // ---- finalize: carve transferred files, extract TLS certs, collect inbound/reverse sessions
+    function joinChunks(chunks, total) { const out = new Uint8Array(total); let o = 0; for (const c of chunks) { out.set(c.subarray(0, Math.min(c.length, total - o)), o); o += c.length; if (o >= total) break; } return out; }
+    const SERVICE_PORTS = new Set([80, 443, 8080, 8443, 25, 110, 143, 465, 587, 993, 995, 53, 22, 21, 3389, 3306, 5432, 1433, 389, 636, 123, 445, 139, 88, 5060, 5061]);
+    for (const c of conns.values()) {
+      if (c.proto === 'tcp' && c.sbuf && c.sbytes && !c.certDone) {
+        c.certDone = true;
+        const sbuf = joinChunks(c.sbuf, c.sbytes); c.sbuf = null;
+        const sh = serverHelloInfo(sbuf);
+        if (sh) { if (sh.ja3s) { let s = ja3sBySrv.get(c.dst); if (!s) { s = new Set(); ja3sBySrv.set(c.dst, s); } s.add(sh.ja3s); } if (sh.version && sh.version < 0x0303) tlsOld.set(c.src + '>' + c.dst + ':' + c.dport, { src: c.src, dst: c.dst, sni: c.sni, ver: sh.version, idx: c.idx.slice(0, 4) }); }
+        const cert = certFromServerBuffer(sbuf);
+        if (cert && (cert.subject || cert.issuer)) { cert.sni = c.sni; cert.dst = c.dst; cert.src = c.src; cert.dport = c.dport; cert.idx = c.idx.slice(0, 6); cert.ja3s = sh && sh.ja3s; certByKey.set(c.src + '>' + c.dst + ':' + c.dport, cert); }
+      }
+      if (c.carve && c.rbuf && c.rbytes > 0) {
+        const buf = joinChunks(c.rbuf, c.rbytes); c.rbuf = null;
+        let body = buf, ctype = '', clen = -1;
+        const hdrEnd = bytesIndexOf(buf, '\r\n\r\n', Math.min(buf.length, 8192));
+        if (hdrEnd >= 0) {
+          const head = ascii(buf, 0, hdrEnd);
+          const mct = /content-type:\s*([^\r\n;]+)/i.exec(head); if (mct) ctype = mct[1].trim();
+          const mcl = /content-length:\s*(\d+)/i.exec(head); if (mcl) clen = +mcl[1];
+          if (/^HTTP\//.test(head)) body = buf.subarray(hdrEnd + 4);
+        }
+        if (body.length >= 8) {
+          const magic = magicType(body);
+          const path = c.req ? c.req.path : '';
+          const extHit = path && EXE_EXT.test(path);
+          if (magic || extHit) {
+            objects.push({ src: c.src, dst: c.dst, dport: c.dport, host: c.req ? c.req.host : c.host, path, method: c.req ? c.req.method : '', ctype, declaredLen: clen, bytes: body.length, partial: clen >= 0 && body.length < clen, sha256: sha256hex(body.subarray(0, Math.min(body.length, 1048576))), magic, idx: c.idx.slice(0, 8) });
+          }
+          if (/text|json|xml|javascript|form|html|^$/.test(ctype) || hdrEnd < 0) scanSecrets(ascii(body, 0, Math.min(body.length, 8192)), c.dst, c.src, 'HTTP body', (c.idx[0] || 0));
+        }
+      }
+      // inbound / reverse sessions: external client connecting in to an internal host on a non-service port
+      if (c.proto === 'tcp' && !isPrivate(c.src) && isPrivate(c.dst) && !c.implicit && (c.sBytes + c.cBytes) > 0 && !SERVICE_PORTS.has(c.dport)) {
+        const k = c.dst + ':' + c.dport; let g = inboundSrv.get(k); if (!g) { g = { ip: c.dst, port: c.dport, ext: new Set(), bytes: 0, idx: [] }; inboundSrv.set(k, g); } g.ext.add(c.src); g.bytes += c.sBytes + c.cBytes; for (const i of c.idx) pushCap(g.idx, i, 20);
+      }
+    }
+    if (objects.length > 400) objects.length = 400;
+
+    // ---- port scans, sweeps, SYN floods, beaconing, brute force, suspicious ports
+    const bySrcDst = new Map(), bySrcPort = new Map(), byDstPort = new Map(), bySrcService = new Map();
+    for (const f of flows.values()) {
+      if (f.proto === 'tcp' && f.syn === 0 && f.synack === 0) continue;
+      { const k = f.src + '>' + f.dst; let g = bySrcDst.get(k); if (!g) { g = { src: f.src, dst: f.dst, ports: [], open: [], closed: 0, first: Infinity, last: 0, idx: [], udp: 0 }; bySrcDst.set(k, g); }
+        g.ports.push(f.dport); if (f.synack) g.open.push(f.dport); if (f.rst && !f.synack) g.closed++; if (f.first < g.first) g.first = f.first; if (f.last > g.last) g.last = f.last; if (f.proto === 'udp') g.udp++; for (const i of f.idx) pushCap(g.idx, i, 100); }
+      if (f.proto === 'tcp') {
+        { const k = f.src + '>' + f.dport; let g = bySrcPort.get(k); if (!g) { g = { src: f.src, port: f.dport, hosts: new Set(), open: 0, first: Infinity, last: 0, idx: [] }; bySrcPort.set(k, g); }
+          g.hosts.add(f.dst); if (f.synack) g.open++; if (f.first < g.first) g.first = f.first; if (f.last > g.last) g.last = f.last; for (const i of f.idx) pushCap(g.idx, i, 100); }
+        { const k = f.dst + ':' + f.dport; let g = byDstPort.get(k); if (!g) { g = { dst: f.dst, port: f.dport, syn: 0, synack: 0, srcs: new Set(), starts: [], idx: [] }; byDstPort.set(k, g); }
+          g.syn += f.syn; g.synack += f.synack; g.srcs.add(f.src); for (const s of f.starts) if (g.starts.length < 20000) g.starts.push(s); for (const i of f.idx) pushCap(g.idx, i, 100); }
+        if (AUTH_PORTS[f.dport] && f.synack) { const k = f.src + '>' + f.dport; let g = bySrcService.get(k); if (!g) { g = { src: f.src, port: f.dport, hosts: new Set(), idx: [] }; bySrcService.set(k, g); } g.hosts.add(f.dst); for (const i of f.idx) pushCap(g.idx, i, 100); }
+      }
+    }
+    const scanners = new Set();
+    for (const g of bySrcDst.values()) {
+      if (g.ports.length >= T.scanPorts) {
+        scanners.add(g.src);
+        const span = Math.max(0, g.last - g.first);
+        add({
+          category: 'Reconnaissance', severity: g.ports.length >= 100 || g.open.length ? 'high' : 'medium',
+          title: 'Port scan from ' + g.src + ' against ' + g.dst,
+          summary: g.src + ' probed ' + g.ports.length + ' distinct ports on ' + g.dst + ' in ' + span.toFixed(1) + ' s' + (g.open.length ? '; ' + g.open.length + ' port(s) answered with SYN-ACK (open).' : '.'),
+          hosts: [g.src, g.dst],
+          evidence: [['Distinct ports probed', g.ports.length], ['Open (SYN-ACK)', g.open.length ? g.open.slice(0, 15).sort((a, b) => a - b).join(', ') + (g.open.length > 15 ? ' …' : '') : 'none'], ['Closed (RST)', g.closed], ['UDP probes', g.udp], ['Rate', span > 0 ? (g.ports.length / span).toFixed(1) + ' ports/s' : 'instant'], ['Sample ports', g.ports.slice(0, 12).join(', ')]],
+          packets: g.idx,
+          advice: 'Confirm whether ' + g.src + ' is an authorised scanner. If not, isolate it and review the open services it discovered.'
+        });
+      }
+    }
+    for (const g of bySrcPort.values()) {
+      if (g.hosts.size >= T.sweepHosts) {
+        scanners.add(g.src);
+        add({
+          category: 'Reconnaissance', severity: g.hosts.size >= 50 ? 'high' : 'medium',
+          title: 'Network sweep on port ' + g.port + (PORT_NAMES[g.port] ? ' (' + PORT_NAMES[g.port] + ')' : '') + ' from ' + g.src,
+          summary: g.src + ' attempted connections to port ' + g.port + ' on ' + g.hosts.size + ' different hosts; ' + g.open + ' responded.',
+          hosts: [g.src], evidence: [['Hosts targeted', g.hosts.size], ['Hosts responding', g.open], ['Duration', (g.last - g.first).toFixed(1) + ' s'], ['Sample targets', [...g.hosts].slice(0, 8).join(', ')]],
+          packets: g.idx, advice: 'Horizontal scans usually precede exploitation of a specific service. Check whether ' + g.src + ' should be reaching these hosts.'
+        });
+      }
+    }
+    for (const g of byDstPort.values()) {
+      if (g.syn >= T.synFloodSyns && (g.srcs.size >= T.synFloodSources || g.synack / g.syn < 0.2)) {
+        const secs = new Map(); for (const s of g.starts) inc(secs, Math.floor(s));
+        const peak = Math.max(...secs.values());
+        add({
+          category: 'Denial of service', severity: g.srcs.size >= T.synFloodSources ? 'high' : 'medium',
+          title: 'SYN flood against ' + g.dst + ':' + g.port + (PORT_NAMES[g.port] ? ' (' + PORT_NAMES[g.port] + ')' : ''),
+          summary: g.syn + ' SYN packets reached ' + g.dst + ':' + g.port + ' from ' + g.srcs.size + ' source address(es), peaking at ' + peak + ' SYN/s; only ' + g.synack + ' handshakes were answered.',
+          hosts: [g.dst], evidence: [['SYN packets', g.syn], ['Distinct sources', g.srcs.size], ['SYN-ACK replies', g.synack], ['Peak rate', peak + ' SYN/s'], ['Sample sources', [...g.srcs].slice(0, 6).join(', ')]],
+          packets: g.idx, advice: 'Many distinct sources with no completed handshakes indicates spoofed-source flooding. Enable SYN cookies and rate-limit at the edge.'
+        });
+      }
+    }
+    // Group connection attempts by their logical peer, not by IP, so a beacon that rotates across
+    // several addresses behind one server name (CDN fronting, fast-flux) is scored as one channel.
+    const beaconGroups = new Map();
+    for (const f of flows.values()) {
+      if (!f.starts.length || PERIODIC_OK.has(f.dport) || scanners.has(f.src)) continue;
+      let name = ''; const names = new Map();
+      for (const c of f.conns) { const nm = c.sni || c.host; if (nm) inc(names, nm); }
+      if (names.size) name = [...names.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      const key = f.src + '|' + (name ? 'name:' + name + '/' + f.dport : f.dst + ':' + f.dport + '/' + f.proto);
+      let g = beaconGroups.get(key);
+      if (!g) { g = { src: f.src, name, dport: f.dport, proto: f.proto, starts: [], idx: [], bytes: 0, dsts: new Set() }; beaconGroups.set(key, g); }
+      for (const s of f.starts) g.starts.push(s); for (const i of f.idx) pushCap(g.idx, i, 60); g.bytes += f.bytes; g.dsts.add(f.dst);
+    }
+    for (const g of beaconGroups.values()) {
+      if (g.starts.length < T.beaconMin) continue;
+      const s = [...g.starts].sort((a, b) => a - b);
+      const iv = []; for (let i = 1; i < s.length; i++) { const d = s[i] - s[i - 1]; if (d >= 1) iv.push(d); }
+      if (iv.length < T.beaconMin - 1) continue;
+      const { mean, sd, cv } = stats(iv);
+      // Robust timing statistics: a fixed sleep gives near-zero spread; a jittered sleep gives a
+      // narrow, symmetric band of gaps (low Bowley skew, small MAD/median); ordinary browsing gives
+      // heavy-tailed gaps with high skew and MAD. Both of the first two are flagged.
+      const sorted = [...iv].sort((a, b) => a - b);
+      const q = p => { const pos = (sorted.length - 1) * p, lo = Math.floor(pos), hi = Math.ceil(pos); return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo); };
+      const q1 = q(0.25), med = q(0.5), q3 = q(0.75);
+      const bowley = q3 - q1 > 0 ? (q3 + q1 - 2 * med) / (q3 - q1) : 0;
+      const mad = median(iv.map(v => Math.abs(v - med))); const madRatio = med > 0 ? mad / med : 1;
+      const lo = q(0.05), hi = q(0.95); const jitterPct = hi > 0 ? (1 - lo / hi) * 100 : 100;
+      // Band width is the decisive statistic on small samples: a sleep timer with jitter J keeps every gap
+      // inside [S·(1−J), S], whereas human-driven gaps span more than an order of magnitude.
+      const timingScore = 0.6 * (1 - Math.min(1, madRatio)) + 0.4 * (1 - Math.min(1, jitterPct / 100));
+      if (med >= T.beaconMinInterval && timingScore >= T.beaconTiming && jitterPct <= 75) {
+        const dstList = [...g.dsts]; const external = dstList.some(d => !isPrivate(d)); const rotating = g.dsts.size > 1;
+        const fixed = cv <= 0.1;
+        const kind = fixed ? 'fixed interval' : 'jittered sleep';
+        const peer = g.name ? g.name + ':' + g.dport : dstList[0] + ':' + g.dport;
+        const target = g.name ? g.name + ' (' + g.dsts.size + ' IP' + (g.dsts.size === 1 ? '' : 's') + ')' : dstList[0];
+        const ev = [['Pattern', kind + (rotating ? ', rotating destinations' : '')], ['Connections', iv.length + 1], ['Median interval', med.toFixed(2) + ' s'], ['Interval band (5th–95th pct)', lo.toFixed(1) + '–' + hi.toFixed(1) + ' s'], ['Jitter', jitterPct.toFixed(0) + '%'], ['Timing score', timingScore.toFixed(2) + ' (skew ' + bowley.toFixed(2) + ', MAD/median ' + madRatio.toFixed(2) + ')'], ['Bytes', fmtBytes(g.bytes)]];
+        if (g.name) ev.push(['Server name', g.name]);
+        ev.push(['Destination IPs', dstList.slice(0, 6).join(', ') + (g.dsts.size > 6 ? ' …' : '') + (external ? '' : ' (internal)')]);
+        add({
+          category: 'Command and control', severity: external ? 'high' : 'medium',
+          title: 'Beaconing from ' + g.src + ' to ' + peer + ' (' + kind + (rotating ? ', rotating' : '') + ')',
+          summary: g.src + ' opened ' + (iv.length + 1) + ' ' + g.proto.toUpperCase() + ' connections to ' + target + (rotating ? ', spread across ' + g.dsts.size + ' addresses behind one server name,' : '') + (fixed ? ' at an almost fixed interval of ' + med.toFixed(1) + ' s (±' + sd.toFixed(2) + ' s).' : ' with gaps confined to a narrow band of ' + lo.toFixed(0) + '–' + hi.toFixed(0) + ' s, the uniform spread a randomised sleep timer produces rather than the long tail of human activity.') + (rotating ? ' Rotating addresses under a stable name is how fronted or fast-flux C2 keeps a single channel alive.' : ''),
+          hosts: [g.src, ...dstList.slice(0, 1)], evidence: ev,
+          packets: g.idx, advice: 'Regular callbacks, with or without jitter or address rotation, are typical of malware check-ins. Identify the process on ' + g.src + ' that owns these connections and check ' + (g.name || 'the destination') + ' against threat intelligence.'
+        });
+      }
+    }
+    for (const f of flows.values()) {
+      if (f.proto !== 'tcp' || !AUTH_PORTS[f.dport]) continue;
+      if (f.starts.length >= T.bruteConns && !scanners.has(f.src)) {
+        add({
+          category: 'Credential attack', severity: f.starts.length >= T.bruteConns * 5 ? 'high' : 'medium',
+          title: 'Repeated ' + AUTH_PORTS[f.dport] + ' connections from ' + f.src + ' to ' + f.dst,
+          summary: f.src + ' opened ' + f.starts.length + ' separate ' + AUTH_PORTS[f.dport] + ' sessions to ' + f.dst + ' within ' + (f.last - f.first).toFixed(1) + ' s, a pattern consistent with password guessing.',
+          hosts: [f.src, f.dst], evidence: [['Connections', f.starts.length], ['Service', AUTH_PORTS[f.dport] + ' (port ' + f.dport + ')'], ['Handshakes completed', f.synack], ['Resets', f.rst], ['Window', (f.last - f.first).toFixed(1) + ' s']],
+          packets: f.idx, advice: 'Check authentication logs on ' + f.dst + ' for failed logins from ' + f.src + ' and consider lockout or rate limiting.'
+        });
+      }
+    }
+    for (const g of bySrcService.values()) {
+      if (g.hosts.size >= T.lateralHosts && (g.port === 445 || g.port === 3389 || g.port === 22 || g.port === 5985 || g.port === 135 || g.port === 5900) && !scanners.has(g.src)) {
+        add({
+          category: 'Lateral movement', severity: 'medium',
+          title: g.src + ' reached ' + AUTH_PORTS[g.port] + ' on ' + g.hosts.size + ' hosts',
+          summary: 'One host completed ' + AUTH_PORTS[g.port] + ' handshakes with ' + g.hosts.size + ' different machines. Workstations rarely need this many admin-protocol sessions.',
+          hosts: [g.src], evidence: [['Service', AUTH_PORTS[g.port]], ['Hosts reached', g.hosts.size], ['Targets', [...g.hosts].slice(0, 8).join(', ')]],
+          packets: g.idx, advice: 'Verify that ' + g.src + ' is an administrative or management system. Otherwise treat it as a possible compromised pivot.'
+        });
+      }
+    }
+    for (const f of flows.values()) {
+      if (f.proto === 'tcp' && SUSPICIOUS_PORTS[f.dport] && f.synack) {
+        add({
+          category: 'Suspicious connection', severity: isPrivate(f.dst) ? 'low' : 'medium',
+          title: 'Established connection to port ' + f.dport + ' (' + f.src + ' → ' + f.dst + ')',
+          summary: 'Port ' + f.dport + ' is ' + SUSPICIOUS_PORTS[f.dport] + '. ' + f.src + ' completed ' + f.synack + ' handshake(s) with ' + f.dst + ' on it and exchanged ' + fmtBytes(f.bytes) + '.',
+          hosts: [f.src, f.dst], evidence: [['Port', f.dport], ['Known use', SUSPICIOUS_PORTS[f.dport]], ['Bytes', fmtBytes(f.bytes)], ['Sessions', f.synack]],
+          packets: f.idx, advice: 'Inspect the payload of this session and the process that opened it.'
+        });
+      }
+    }
+
+    // ---- exfiltration
+    if (hasExternal) {
+      for (const c of st.convs.values()) {
+        let int = null, ext = null, out = 0, inn = 0;
+        if (isPrivate(c.a) && !isPrivate(c.b)) { int = c.a; ext = c.b; out = c.bytesAB; inn = c.bytesBA; }
+        else if (isPrivate(c.b) && !isPrivate(c.a)) { int = c.b; ext = c.a; out = c.bytesBA; inn = c.bytesAB; }
+        else continue;
+        if (out >= T.exfilBytes || (out >= T.exfilMinBytes && out / Math.max(inn, 1) >= T.exfilRatio)) {
+          const ports = [...c.ports].slice(0, 6);
+          add({
+            category: 'Data exfiltration', severity: out >= T.exfilBytes ? 'high' : 'medium',
+            title: 'Large outbound transfer from ' + int + ' to ' + ext,
+            summary: int + ' sent ' + fmtBytes(out) + ' to external host ' + ext + ' while receiving only ' + fmtBytes(inn) + ' (' + (out / Math.max(inn, 1)).toFixed(0) + ':1 ratio) over ' + (c.last - c.first).toFixed(0) + ' s.',
+            hosts: [int, ext], evidence: [['Outbound', fmtBytes(out)], ['Inbound', fmtBytes(inn)], ['Ratio out:in', (out / Math.max(inn, 1)).toFixed(1)], ['Ports', ports.map(p => p + (PORT_NAMES[p] ? ' (' + PORT_NAMES[p] + ')' : '')).join(', ')], ['Protocols', [...c.protos].join(', ')], ['Duration', (c.last - c.first).toFixed(1) + ' s']],
+            packets: [], convKey: c.a + '|' + c.b, advice: 'Uploads to external hosts dwarfing the downloads deserve a look. Confirm the destination is a sanctioned backup, cloud or update service.'
+          });
+        }
+      }
+    }
+
+    // ---- ARP
+    for (const [ip, m] of ipMacs) {
+      if (m.size >= 2) {
+        const macs = [...m.entries()].sort((a, b) => b[1].count - a[1].count);
+        add({
+          category: 'Spoofing', severity: 'high',
+          title: 'ARP spoofing: ' + ip + ' claimed by ' + m.size + ' MAC addresses',
+          summary: 'The IP address ' + ip + ' was announced by ' + macs.map(x => x[0] + ' (' + x[1].count + '×)').join(' and ') + '. Two hardware addresses for one IP is the signature of ARP cache poisoning.',
+          hosts: [ip], evidence: macs.map(x => ['MAC ' + x[0], x[1].count + ' announcements']),
+          packets: macs.flatMap(x => x[1].idx), advice: 'Check which MAC is the legitimate owner (switch CAM table, DHCP leases). The other host is likely intercepting traffic to ' + ip + '.'
+        });
+      }
+    }
+    for (const [sha, u] of arpUnsolicited) {
+      if (u.count >= 10) {
+        add({
+          category: 'Spoofing', severity: 'high',
+          title: 'Unsolicited ARP replies from ' + sha,
+          summary: sha + ' sent ' + u.count + ' ARP replies that no one asked for, telling ' + u.victims.size + ' host(s) that ' + [...u.claims].slice(0, 3).join(', ') + ' can be reached at its own MAC address.',
+          hosts: [...u.claims].slice(0, 3), evidence: [['Unsolicited replies', u.count], ['Victims', [...u.victims].slice(0, 6).join(', ')], ['IPs claimed', [...u.claims].slice(0, 6).join(', ')]],
+          packets: u.idx, advice: 'This is how ARP poisoning tools redirect traffic through an attacker. Locate the port for ' + sha + ' on the switch and disconnect it.'
+        });
+      }
+    }
+    for (const [sha, g] of arpGrat) {
+      if (g.count >= 20) add({ category: 'Spoofing', severity: 'medium', title: 'Gratuitous ARP burst from ' + sha + ' (' + g.ip + ')', summary: g.count + ' gratuitous ARP announcements for ' + g.ip + '. A few after boot are normal; a stream of them is used to poison caches or signals an IP conflict.', hosts: [g.ip], evidence: [['Announcements', g.count], ['MAC', sha]], packets: g.idx, advice: 'Compare with the DHCP lease for ' + g.ip + '.' });
+    }
+    for (const [sha, s] of arpScan) {
+      if (s.targets.size >= 50) add({ category: 'Reconnaissance', severity: 'medium', title: 'ARP scan from ' + sha + ' (' + s.ip + ')', summary: s.ip + ' asked for the MAC address of ' + s.targets.size + ' different IPs. Sequential ARP requests across a subnet enumerate live hosts.', hosts: [s.ip], evidence: [['Addresses probed', s.targets.size], ['Requests', s.count]], packets: s.idx, advice: 'Tools such as arp-scan and nmap -PR produce this pattern.' });
+    }
+
+    // ---- DNS
+    for (const [src, s] of dnsBySrc) {
+      for (const [dom, e] of s.byDomain) {
+        if (e.suspicious >= T.dnsTunnelQueries) {
+          add({
+            category: 'Covert channel', severity: 'high',
+            title: 'Possible DNS tunnelling from ' + src + ' via ' + dom,
+            summary: src + ' sent ' + e.suspicious + ' queries with long or high-entropy subdomains under ' + dom + ' (' + e.count + ' queries, ' + fmtBytes(e.bytes) + ' in total). Encoded data in hostnames is the hallmark of DNS tunnels.',
+            hosts: [src], evidence: [['Domain', dom], ['Suspicious queries', e.suspicious + ' of ' + e.count], ['Average subdomain length', (e.totalSub / e.count).toFixed(0) + ' chars'], ['Longest subdomain', e.maxSub + ' chars'], ['Mean entropy', (e.ent / e.suspicious).toFixed(2) + ' bits/char'], ['Record types', [...e.types.entries()].map(x => x[0] + ' ' + x[1]).join(', ')], ['Example', e.sample]],
+            packets: e.idx, advice: 'Block ' + dom + ' at the resolver and examine ' + src + ' for tunnelling clients (iodine, dnscat2, Cobalt Strike DNS beacons).'
+          });
+        }
+      }
+      if (s.nx >= T.nxdomainMin && s.responses && s.nx / s.responses >= T.nxdomainRatio) {
+        add({
+          category: 'Command and control', severity: 'medium',
+          title: 'High NXDOMAIN rate for ' + src,
+          summary: (s.nx / s.responses * 100).toFixed(0) + '% of DNS answers to ' + src + ' were NXDOMAIN (' + s.nx + ' of ' + s.responses + '), across ' + s.nxNames.size + ' different names. Malware using domain-generation algorithms produces this while hunting for its controller.',
+          hosts: [src], evidence: [['NXDOMAIN answers', s.nx], ['All answers', s.responses], ['Distinct failing names', s.nxNames.size], ['Examples', [...s.nxNames].slice(0, 4).join(', ')]],
+          packets: s.nxIdx, advice: 'Random-looking failing names point to a DGA; a handful of repeated typos do not.'
+        });
+      }
+      if (s.servers.size >= 4) {
+        add({ category: 'Policy', severity: 'low', title: src + ' uses ' + s.servers.size + ' different DNS resolvers', summary: 'Queries went to ' + [...s.servers].slice(0, 6).join(', ') + '. Hosts normally use one or two resolvers; more suggests DNS hijacking, a VPN leak or a tunnel probing for an open resolver.', hosts: [src], evidence: [['Resolvers', [...s.servers].slice(0, 8).join(', ')]], packets: [], advice: 'Compare against the resolvers configured by DHCP.' });
+      }
+    }
+
+    // ---- ICMP
+    for (const [src, s] of icmpBySrc) {
+      if (s.large >= T.icmpLargeCount) add({ category: 'Covert channel', severity: 'medium', title: 'Oversized ICMP payloads from ' + src, summary: s.large + ' echo packets from ' + src + ' carried ' + T.icmpLarge + '+ bytes of data (largest ' + s.maxData + ' B). Normal pings carry 32–56 bytes; large payloads are used by ICMP tunnels.', hosts: [src], evidence: [['Oversized packets', s.large], ['Largest payload', s.maxData + ' B']], packets: s.largeIdx, advice: 'Inspect the payload for structured data. ptunnel and icmpsh are common tools.' });
+      if (s.echoTargets.size >= T.sweepHosts) { scanners.add(src); add({ category: 'Reconnaissance', severity: 'medium', title: 'Ping sweep from ' + src, summary: src + ' sent echo requests to ' + s.echoTargets.size + ' different hosts.', hosts: [src], evidence: [['Hosts pinged', s.echoTargets.size], ['Sample', [...s.echoTargets].slice(0, 8).join(', ')]], packets: s.echoIdx, advice: 'Host discovery usually precedes a port scan from the same source.' }); }
+    }
+    if (redirects.length) add({ category: 'Spoofing', severity: 'medium', title: 'ICMP redirect messages observed', summary: redirects.length + ' ICMP redirect(s) seen, e.g. from ' + redirects[0].src + ' to ' + redirects[0].dst + '. Redirects can silently reroute a host through an attacker.', hosts: [...new Set(redirects.map(r => r.src))].slice(0, 3), evidence: [['Redirects', redirects.length], ['Senders', [...new Set(redirects.map(r => r.src))].slice(0, 5).join(', ')]], packets: redirects.map(r => r.n), advice: 'Most hosts should ignore redirects; verify the sender is a real router.' });
+    if (ra.size >= 2) add({ category: 'Spoofing', severity: 'medium', title: 'IPv6 router advertisements from ' + ra.size + ' sources', summary: 'Router advertisements came from ' + [...ra.keys()].slice(0, 4).join(', ') + '. A rogue RA lets an attacker become the default IPv6 gateway (mitm6-style attacks).', hosts: [...ra.keys()].slice(0, 4), evidence: [...ra.entries()].map(x => [x[0], x[1].count + ' RA']), packets: [...ra.values()].flatMap(x => x.idx), advice: 'Enable RA Guard on access switches.' });
+
+    // ---- TCP flag anomalies
+    for (const [src, a] of flagAnom) {
+      if (a.count >= T.flagAnomalies) add({ category: 'Reconnaissance', severity: 'medium', title: 'Abnormal TCP flag combinations from ' + src, summary: src + ' sent ' + a.count + ' packets with flag combinations that never occur in normal traffic (' + [...a.kinds.entries()].map(x => x[0] + ' ×' + x[1]).join(', ') + ') to ' + a.targets.size + ' host(s). These are stealth-scan or OS-fingerprinting probes.', hosts: [src], evidence: [...a.kinds.entries()].map(x => [x[0], x[1]]).concat([['Targets', [...a.targets].slice(0, 6).join(', ')]]), packets: a.idx, advice: 'nmap -sN / -sX / -sF scans produce these. Firewalls should drop them.' });
+    }
+
+    // ---- cleartext credentials, odd ports
+    for (const e of creds.values()) {
+      add({ category: 'Cleartext credentials', severity: 'medium', title: e.proto + ' credentials sent in the clear (' + e.src + ' → ' + e.dst + ')', summary: e.src + ' authenticated to ' + e.dst + ':' + e.port + ' over unencrypted ' + e.proto.replace(' Basic auth', '') + (e.users.size ? ' as ' + [...e.users].slice(0, 3).map(u => '"' + u + '"').join(', ') : '') + '. Anyone on the path can read the password.', hosts: [e.src, e.dst], evidence: [['Protocol', e.proto], ['Port', e.port], ['Usernames', e.users.size ? [...e.users].slice(0, 5).join(', ') : 'not visible'], ['Occurrences', e.count]], packets: e.idx, advice: 'Move the service to TLS (HTTPS, FTPS/SFTP, IMAPS) and rotate the exposed password.' });
+    }
+    for (const e of oddPort.values()) {
+      add({ category: 'Evasion', severity: e.proto === 'SSH' ? 'medium' : 'low', title: e.proto + ' on unexpected port ' + e.port + ' (' + e.src + ' → ' + e.dst + ')', summary: e.proto + ' traffic was seen on port ' + e.port + (PORT_NAMES[e.port] ? ', normally ' + PORT_NAMES[e.port] : '') + '. Non-standard ports are used to slip past port-based filtering.', hosts: [e.src, e.dst], evidence: [['Protocol', e.proto], ['Port', e.port], ['Packets', e.count], ['Detail', e.detail]], packets: e.idx, advice: 'Check whether this is a known internal service; otherwise treat it as evasion.' });
+    }
+
+    // ---- fragmentation, TTL, spikes, integrity
+    for (const [src, f] of fragBySrc) {
+      if (f.count >= T.fragCount) add({ category: 'Evasion', severity: 'low', title: 'Heavy IP fragmentation from ' + src, summary: f.count + ' fragmented IP packets from ' + src + '. Fragments are rare on modern networks and are used to evade IDS signatures or exhaust reassembly buffers.', hosts: [src], evidence: [['Fragments', f.count]], packets: f.idx, advice: 'Compare MTU settings; otherwise investigate the sender.' });
+    }
+    for (const [src, t] of ttlBySrc) {
+      const h = st.hosts.get(src); if (!h || h.pkts < 20 || t.size < 2) continue;
+      const vals = [...t.keys()]; const spread = Math.max(...vals) - Math.min(...vals);
+      if (spread >= 32 && !scanners.has(src)) add({ category: 'Spoofing', severity: 'low', title: 'Inconsistent TTL values from ' + src, summary: 'Packets from ' + src + ' arrived with TTLs ' + [...t.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(x => x[0] + ' (' + x[1] + '×)').join(', ') + '. One host produces one initial TTL; a spread like this means several systems share the address or packets are spoofed.', hosts: [src], evidence: [['Distinct TTLs', t.size], ['Spread', spread]], packets: [], advice: 'Usually NAT or a load balancer; otherwise spoofing.' });
+    }
+    const secs = [...perSec.entries()].sort((a, b) => a[0] - b[0]);
+    if (duration >= 10 && secs.length >= 5) {
+      const vals = secs.map(x => x[1]); const med = median(vals); const mad = median(vals.map(v => Math.abs(v - med))) || 1;
+      const thr = Math.max(50, med * T.spikeFactor, med + 6 * mad);
+      const bursts = []; let cur = null;
+      for (const [sec, cnt] of secs) {
+        if (cnt > thr) { if (cur && sec - cur.end <= 2) { cur.end = sec; cur.peak = Math.max(cur.peak, cnt); cur.pkts += cnt; } else { cur = { start: sec, end: sec, peak: cnt, pkts: cnt }; bursts.push(cur); } }
+      }
+      for (const b of bursts.sort((a, b) => b.peak - a.peak).slice(0, 3)) {
+        const srcs = new Map(); const idx = [];
+        for (let i = 0; i < n; i++) { const r = pkts[i].ts - st.start; if (r >= b.start && r < b.end + 1) { if (pkts[i].src) inc(srcs, pkts[i].src); pushCap(idx, pkts[i].n, 100); } }
+        const ts = top(srcs, 3);
+        add({ category: 'Traffic anomaly', severity: 'low', title: 'Traffic burst at +' + b.start + ' s (' + b.peak + ' pkt/s)', summary: 'Packet rate jumped to ' + b.peak + ' pkt/s for ' + (b.end - b.start + 1) + ' s against a median of ' + med.toFixed(0) + ' pkt/s. Top sender: ' + (ts[0] ? ts[0][0] + ' (' + ts[0][1] + ' pkts)' : 'n/a') + '.', hosts: ts.map(x => x[0]), evidence: [['Peak', b.peak + ' pkt/s'], ['Median', med.toFixed(1) + ' pkt/s'], ['Window', '+' + b.start + ' s to +' + (b.end + 1) + ' s'], ['Top senders', ts.map(x => x[0] + ' ' + x[1]).join(', ')]], packets: idx, advice: 'Bursts alone are not malicious; they matter when they line up with another finding above.' });
+      }
+    }
+    if (st.malformed) add({ category: 'Integrity', severity: 'low', title: st.malformed + ' malformed packet(s)', summary: 'Packets whose headers could not be parsed. Usually capture truncation; occasionally deliberately corrupted packets aimed at a parser.', hosts: [], evidence: [['Malformed', st.malformed], ['Truncated by snaplen', st.truncated]], packets: pkts.filter(p => p.malformed).slice(0, 50).map(p => p.n), advice: 'Re-capture with a larger snaplen if truncation is the cause.' });
+    if (unsupported.count) add({ category: 'Integrity', severity: 'info', title: unsupported.count + ' packet(s) on an unsupported link type', summary: unsupported.lt + '. Those packets were counted but not decoded.', hosts: [], evidence: [['Packets', unsupported.count]], packets: [], advice: 'Supported link types: Ethernet, Linux cooked, raw IP and BSD loopback.' });
+
+    // ---- DNS resolution behaviour
+    for (const [dom, di] of domainIPs) {
+      if (di.ips.size >= 5 && di.minTtl <= 300 && di.answers >= 5) {
+        add({ category: 'Infrastructure', severity: 'medium', title: dom + ' resolves to ' + di.ips.size + ' different addresses on short TTLs', summary: 'Answers for ' + dom + ' pointed at ' + di.ips.size + ' distinct IPs with a TTL as low as ' + di.minTtl + ' s. Rapidly rotating A records are how fast-flux networks hide a controller behind disposable hosts; large CDNs do the same legitimately.', hosts: [], evidence: [['Domain', dom], ['Distinct IPs', di.ips.size], ['Lowest TTL', di.minTtl + ' s'], ['Sample', [...di.ips].slice(0, 6).join(', ')]], packets: [], advice: 'Check whether the IPs belong to one hosting provider or are scattered across residential ranges.' });
+      }
+      const priv = [...di.ips].filter(ip => isPrivate(ip) && !ip.startsWith('224') && ip !== '0.0.0.0');
+      if (priv.length && !dom.endsWith('.local') && !dom.endsWith('.arpa') && !dom.endsWith('.home') && !dom.endsWith('.lan') && !dom.endsWith('.internal') && !dom.endsWith('.corp') && !dom.endsWith('.localdomain')) {
+        add({ category: 'Infrastructure', severity: 'low', title: 'Public-looking domain ' + dom + ' resolves to a private address', summary: dom + ' was answered with ' + priv.slice(0, 3).join(', ') + '. A public name mapping to an internal or loopback address is the mechanism of DNS rebinding attacks, though split-horizon DNS produces it legitimately.', hosts: [], evidence: [['Domain', dom], ['Private answers', priv.slice(0, 5).join(', ')]], packets: [], advice: 'Confirm the name is managed by your own DNS.' });
+      }
+    }
+
+    // ---- transferred-file artifacts
+    for (const o of objects) {
+      const dangerous = (o.magic && o.magic.danger) || (o.path && EXE_EXT.test(o.path));
+      const mismatch = o.magic && o.ctype && ((/image\/|text\/css|javascript|text\/html/.test(o.ctype) && o.magic.danger));
+      if (!dangerous && !mismatch) continue;
+      const ext = !isPrivate(o.dst);
+      add({
+        category: 'Malware delivery', severity: (o.magic && o.magic.danger) ? (ext ? 'high' : 'medium') : 'medium',
+        title: (o.magic ? o.magic.type : 'Executable-extension file') + ' downloaded by ' + o.src + (o.host ? ' from ' + o.host : ''),
+        summary: o.src + ' downloaded ' + (o.magic ? o.magic.type : 'a file') + ' (' + fmtBytes(o.bytes) + (o.partial ? ' captured of ' + fmtBytes(o.declaredLen) : '') + ') from ' + (o.host || o.dst) + (o.path ? o.path : '') + '. SHA-256 ' + o.sha256 + '.' + (mismatch ? ' The server labelled it “' + o.ctype + '”, which does not match the file’s actual type — a common masquerading trick.' : ''),
+        hosts: [o.src, o.dst], evidence: [['SHA-256', o.sha256], ['File type', o.magic ? o.magic.type : 'by extension'], ['Content-Type header', o.ctype || '—'], ['Size', fmtBytes(o.bytes) + (o.partial ? ' (partial capture)' : '')], ['URL', (o.host || o.dst) + (o.path || '')], ['Requested by', o.src]],
+        packets: o.idx, advice: 'Submit the SHA-256 to VirusTotal. If unknown or malicious, isolate ' + o.src + ' and hunt for execution on the host.'
+      });
+    }
+
+    // ---- TLS certificate anomalies & fingerprint intel
+    for (const [key, c] of certByKey) {
+      const issues = [];
+      if (c.selfSigned) issues.push('self-signed');
+      if (c.notAfter && c.notAfter * 1000 < Date.now()) issues.push('expired ' + fmtClock(c.notAfter));
+      if (c.notBefore && c.sni && c.subject && c.subject !== '*' && c.sni !== c.subject && !(c.subject.startsWith('*.') && c.sni.endsWith(c.subject.slice(1)))) issues.push('subject CN “' + c.subject + '” ≠ SNI “' + c.sni + '”');
+      if (!issues.length) continue;
+      add({
+        category: 'Suspicious TLS', severity: c.selfSigned && !isPrivate(c.dst) ? 'medium' : 'low',
+        title: 'Suspicious TLS certificate from ' + (c.sni || c.dst) + ' (' + issues[0] + ')',
+        summary: (c.src || 'A host') + ' negotiated TLS with ' + c.dst + (c.sni ? ' (SNI ' + c.sni + ')' : '') + ' presenting a certificate that is ' + issues.join(', ') + '. Self-signed or mismatched certificates on external services are common for malware C2 and interception.',
+        hosts: [c.src, c.dst].filter(Boolean), evidence: [['Subject', c.subject || '—'], ['Issuer', c.issuer || '—'], ['Valid', (c.notBefore ? fmtClock(c.notBefore) : '?') + ' → ' + (c.notAfter ? fmtClock(c.notAfter) : '?')], ['SHA-1 thumbprint', c.sha1], ['SNI', c.sni || '—'], ['Issues', issues.join('; ')]],
+        packets: c.idx || [], advice: 'Validate the certificate against the expected service. Self-signed certs to external IPs warrant blocking and investigation.'
+      });
+    }
+    for (const [src, m] of ja3BySrc) for (const [j, cnt] of m) if (KNOWN_JA3[j]) add({ category: 'Command and control', severity: 'high', title: 'Known-malicious TLS fingerprint (JA3) from ' + src, summary: src + ' produced the JA3 fingerprint ' + j + ', associated with ' + KNOWN_JA3[j] + ', on ' + cnt + ' connection(s). JA3 fingerprints the client’s TLS stack and is stable across destinations.', hosts: [src], evidence: [['JA3', j], ['Attribution', KNOWN_JA3[j]], ['Connections', cnt]], packets: [], advice: 'Treat ' + src + ' as a likely compromised host running the identified tool. Isolate and investigate.' });
+
+    // ---- captured credential material
+    for (const e of credExposed) {
+      add({ category: 'Credential access', severity: 'high', title: e.scheme + ' authentication captured (' + e.src + ' → ' + e.dst + ')', summary: e.src + ' sent ' + e.scheme + ' authentication to ' + e.dst + (e.users.size ? ' as ' + [...e.users].slice(0, 3).join(', ') : '') + ' (' + e.count + ' message(s)). The challenge-response hash traversed the wire and is offline-crackable or relayable.', hosts: [e.src, e.dst], evidence: [['Scheme', e.scheme], ['Accounts', e.users.size ? [...e.users].slice(0, 5).join(', ') : 'not recovered'], ['Messages', e.count]], packets: e.idx, advice: 'Confirm the authentication was expected. If relay is a concern, enforce SMB signing / LDAP channel binding and reset exposed accounts.' });
+    }
+    // ---- Kerberos roasting / spraying heuristics
+    for (const [src, g] of krbBySrc) {
+      if (g.tgs >= 10 && g.rc4 >= 5) add({ category: 'Credential access', severity: 'medium', title: 'Possible Kerberoasting from ' + src, summary: src + ' requested ' + g.tgs + ' Kerberos service tickets, ' + g.rc4 + ' of them with RC4 encryption (offline-crackable). A burst of RC4 TGS requests is the signature of Kerberoasting.', hosts: [src], evidence: [['TGS-REQ', g.tgs], ['RC4 (roastable)', g.rc4], ['AS-REQ', g.asreq], ['KDC', [...g.srvs].slice(0, 3).join(', ')]], packets: g.idx, advice: 'Check which service accounts were targeted, and move them to AES-only with long passwords or gMSA.' });
+      else if (g.asreq >= 20 && g.tgs === 0) add({ category: 'Credential access', severity: 'low', title: 'High Kerberos AS-REQ volume from ' + src, summary: src + ' sent ' + g.asreq + ' Kerberos AS-REQ messages. A large volume of authentication requests can indicate AS-REP roasting or password spraying against the KDC.', hosts: [src], evidence: [['AS-REQ', g.asreq], ['RC4', g.rc4], ['KDC', [...g.srvs].slice(0, 3).join(', ')]], packets: g.idx, advice: 'Correlate with KDC logs (event 4768/4771) for the accounts and outcomes.' });
+    }
+    // ---- SMB / DCE-RPC lateral movement
+    for (const g of smbLateral.values()) {
+      const admin = [...g.pipes].some(p => p === 'svcctl' || p === 'atsvc' || p === 'winreg' || p === 'drsuapi') || g.shares.has('ADMIN$') || g.shares.has('C$');
+      if (!admin && !g.pipes.size) continue;
+      const pipeDesc = [...g.pipes].map(p => p + (PIPE_MEANING[p] ? ' (' + PIPE_MEANING[p] + ')' : '')).join(', ');
+      add({ category: 'Lateral movement', severity: admin ? 'high' : 'medium', title: 'SMB administrative access from ' + g.src + ' to ' + g.dst, summary: g.src + ' used ' + (g.pipes.size ? 'DCE/RPC pipe(s) ' + [...g.pipes].join(', ') : '') + (g.shares.size ? ' and admin share(s) ' + [...g.shares].join(', ') : '') + ' on ' + g.dst + '. This is the mechanism behind PsExec, remote service creation and credential dumping.', hosts: [g.src, g.dst], evidence: [['Named pipes', pipeDesc || '—'], ['Shares', [...g.shares].join(', ') || '—']], packets: g.idx, advice: 'Confirm ' + g.src + ' is an authorised management host. svcctl/atsvc to workstations is a strong lateral-movement signal.' });
+    }
+    // ---- reverse / inbound C2
+    for (const g of inboundSrv.values()) {
+      if (g.bytes < 256) continue;
+      add({ category: 'Command and control', severity: 'medium', title: 'Inbound connection to internal ' + g.ip + ':' + g.port + ' from the internet', summary: 'Internal host ' + g.ip + ' accepted inbound connection(s) on non-standard port ' + g.port + ' from external address(es) ' + [...g.ext].slice(0, 3).join(', ') + ', exchanging ' + fmtBytes(g.bytes) + '. An internal host listening for external connections on an odd port can be a reverse shell or backdoor.', hosts: [g.ip], evidence: [['Internal host', g.ip], ['Listening port', g.port], ['External peers', [...g.ext].slice(0, 6).join(', ')], ['Bytes', fmtBytes(g.bytes)]], packets: g.idx, advice: 'Verify the service is intentional and firewalled correctly. Otherwise treat as a backdoor and investigate the host.' });
+    }
+    // ---- DoH and covert HTTP proxying
+    for (const [src, g] of dohBySrc) if (g.hits >= 3) add({ category: 'Covert channel', severity: 'low', title: 'DNS-over-HTTPS from ' + src, summary: src + ' made ' + g.hits + ' TLS connection(s) to public DoH resolver(s) ' + [...g.servers].slice(0, 3).join(', ') + '. DoH hides DNS lookups from network monitoring and is used to evade DNS-based detection.', hosts: [src], evidence: [['DoH resolvers', [...g.servers].join(', ')], ['Connections', g.hits]], packets: g.idx, advice: 'If DoH is not sanctioned, block these resolvers so DNS stays visible to monitoring.' });
+    for (const h of httpConnect) { /* aggregated below */ }
+    { const byConnect = new Map(); for (const h of httpConnect) { const k = h.src + '>' + h.dst; let g = byConnect.get(k); if (!g) { g = { src: h.src, dst: h.dst, targets: new Set(), idx: [] }; byConnect.set(k, g); } g.targets.add(h.target); pushCap(g.idx, h.n, 20); } for (const g of byConnect.values()) add({ category: 'Evasion', severity: 'low', title: 'HTTP CONNECT proxy tunnelling (' + g.src + ' → ' + g.dst + ')', summary: g.src + ' issued HTTP CONNECT requests through ' + g.dst + ' to ' + g.targets.size + ' target(s) including ' + [...g.targets].slice(0, 3).join(', ') + '. CONNECT tunnels arbitrary TCP through a proxy and is used to bypass egress filtering.', hosts: [g.src, g.dst], evidence: [['Proxy', g.dst], ['Targets', [...g.targets].slice(0, 6).join(', ')]], packets: g.idx, advice: 'Confirm the proxy is sanctioned and the targets are permitted.' }); }
+    // ---- homoglyph / punycode lookalike domains
+    { const seen = new Set(); for (const g of dnsQ.values()) { const sus = suspiciousName(g.domain); if (sus && !seen.has(g.domain)) { seen.add(g.domain); add({ category: 'Infrastructure', severity: 'low', title: 'Look-alike domain queried: ' + g.domain, summary: g.src + ' resolved ' + g.domain + ', which uses ' + sus + '. Internationalised or mixed-script names are used to impersonate legitimate brands in phishing and C2.', hosts: [g.src], evidence: [['Domain', g.domain], ['Reason', sus]], packets: g.idx, advice: 'Render the domain in its Unicode form and compare with the brand it may be imitating.' }); } } }
+
+    // ---- cleartext secrets / PII
+    for (const e of secretsHit.values()) add({ category: 'Cleartext credentials', severity: e.kind === 'private key' || e.kind.includes('card') ? 'high' : 'medium', title: e.kind.charAt(0).toUpperCase() + e.kind.slice(1) + ' exposed in cleartext (' + e.src + ' → ' + e.dst + ')', summary: 'A ' + e.kind + ' was transmitted unencrypted over ' + e.proto + ' between ' + e.src + ' and ' + e.dst + ' (example: ' + e.sample + '). Sensitive data in cleartext can be read by anyone on the path.', hosts: [e.src, e.dst], evidence: [['Type', e.kind], ['Example', e.sample], ['Protocol', e.proto], ['Occurrences', e.count]], packets: e.idx, advice: 'Move the service to TLS and rotate/revoke the exposed secret.' });
+    // ---- SNMP community strings
+    for (const e of snmpCommunity.values()) { if (e.community === 'public' && e.version === 'v2c') continue; add({ category: 'Cleartext credentials', severity: 'medium', title: 'SNMP ' + e.version + ' community string in cleartext (' + e.src + ' → ' + e.dst + ')', summary: e.src + ' used the SNMP community "' + e.community + '" to ' + e.dst + '. SNMP v1/v2c community strings are sent unencrypted and act as passwords to device management.', hosts: [e.src, e.dst], evidence: [['Community', e.community], ['Version', e.version], ['Occurrences', e.count]], packets: e.idx, advice: 'Move to SNMPv3 with authentication/privacy, and change the community string if it is weak or default.' }); }
+    // ---- rogue DHCP
+    if (dhcpServers.size >= 2) add({ category: 'Spoofing', severity: 'high', title: 'Multiple DHCP servers responding (' + dhcpServers.size + ')', summary: 'DHCP responses came from ' + [...dhcpServers.keys()].slice(0, 5).join(', ') + '. More than one DHCP server on a segment points to a rogue server, which can hand clients a malicious gateway or DNS resolver.', hosts: [...dhcpServers.keys()].slice(0, 4), evidence: [...dhcpServers.entries()].map(x => ['Server ' + x[0], x[1] + ' responses']), packets: [], advice: 'Identify which server is authorised; enable DHCP snooping on the switches.' });
+    // ---- TLS hygiene (obsolete protocol version)
+    for (const e of tlsOld.values()) { const vn = { 0x0301: 'TLS 1.0', 0x0300: 'SSL 3.0', 0x0302: 'TLS 1.1' }[e.ver] || ('0x' + e.ver.toString(16)); add({ category: 'Suspicious TLS', severity: 'low', title: 'Obsolete TLS version negotiated: ' + vn + ' (' + e.dst + ')', summary: (e.src || 'A host') + ' negotiated ' + vn + ' with ' + e.dst + (e.sni ? ' (' + e.sni + ')' : '') + '. Versions below TLS 1.2 are deprecated and vulnerable to known downgrade and cipher attacks.', hosts: [e.src, e.dst].filter(Boolean), evidence: [['Version', vn], ['Server', e.dst], ['SNI', e.sni || '—']], packets: e.idx, advice: 'Disable TLS 1.1 and earlier on the server and client.' }); }
+
+    // ---- expert info / TCP health findings
+    for (const c of conns.values()) {
+      if (c.proto !== 'tcp' || !c.hc) continue; const h = c.hc;
+      if (h.dataPkts >= 20 && h.retrans >= 10 && h.retrans / h.dataPkts >= 0.15) add({ category: 'Network health', severity: 'low', title: 'High TCP retransmissions: ' + c.src + ':' + c.sport + ' → ' + c.dst + ':' + c.dport, summary: (h.retrans / h.dataPkts * 100).toFixed(0) + '% of data segments on this connection were retransmitted (' + h.retrans + ' of ' + h.dataPkts + '). Heavy retransmission indicates packet loss, congestion or a failing link.', hosts: [c.src, c.dst], evidence: [['Retransmissions', h.retrans], ['Data segments', h.dataPkts], ['Out-of-order', h.ooo], ['Duplicate ACKs', h.dupAck], ['Handshake RTT', h.rtt != null ? (h.rtt * 1000).toFixed(1) + ' ms' : '—']], packets: c.idx, advice: 'Investigate the path for loss or congestion; this is a performance issue, not necessarily a security one.' });
+      else if (h.zwin >= 3) add({ category: 'Network health', severity: 'info', title: 'TCP zero-window events: ' + c.src + ':' + c.sport + ' ↔ ' + c.dst + ':' + c.dport, summary: 'A receiver advertised a zero window ' + h.zwin + ' time(s), pausing the sender. This means an endpoint could not keep up with incoming data.', hosts: [c.src, c.dst], evidence: [['Zero-window events', h.zwin], ['Data segments', h.dataPkts], ['Retransmissions', h.retrans]], packets: c.idx, advice: 'Check the receiving application/host for resource exhaustion.' });
+    }
+
+    // ---- IOC watchlist matching (user-supplied indicators)
+    { const w = (options && options.ioc) || {}; const wIps = new Set(w.ips || []), wDoms = (w.domains || []).map(d => d.toLowerCase()).filter(Boolean), wHashes = new Set((w.hashes || []).map(h => h.toLowerCase()));
+      if (wIps.size || wDoms.length || wHashes.size) {
+        for (const h of st.hosts.values()) if (wIps.has(h.ip)) add({ category: 'IOC match', severity: 'high', title: 'Watchlist IP observed: ' + h.ip, summary: 'The address ' + h.ip + ' from your IOC watchlist exchanged ' + fmtBytes(h.bytesOut + h.bytesIn) + ' in this capture (' + h.pkts + ' packets).', hosts: [h.ip], evidence: [['Indicator', h.ip], ['Type', 'IP'], ['Bytes', fmtBytes(h.bytesOut + h.bytesIn)], ['Packets', h.pkts]], packets: [], advice: 'This is a confirmed match against your supplied indicators. Scope every internal host that contacted it.' });
+        const domHit = new Map(); for (const [d] of st.dnsDomains) { const dl = d.toLowerCase(); for (const w2 of wDoms) if (dl === w2 || dl.endsWith('.' + w2)) domHit.set(d, 'query'); }
+        for (const [s] of st.sni) { const sl = s.toLowerCase(); for (const w2 of wDoms) if (sl === w2 || sl.endsWith('.' + w2)) domHit.set(s, 'TLS SNI'); }
+        for (const [d, how] of domHit) add({ category: 'IOC match', severity: 'high', title: 'Watchlist domain observed: ' + d, summary: d + ' from your IOC watchlist appeared in this capture (' + how + ').', hosts: [], evidence: [['Indicator', d], ['Type', 'domain'], ['Seen as', how]], packets: [], advice: 'Confirmed watchlist match. Identify which internal hosts resolved or connected to it.' });
+        for (const o of objects) if (wHashes.has((o.sha256 || '').toLowerCase())) add({ category: 'IOC match', severity: 'high', title: 'Watchlist file hash observed', summary: 'A file transferred to ' + o.src + ' matches a SHA-256 on your IOC watchlist (' + o.sha256 + ').', hosts: [o.src, o.dst], evidence: [['Indicator', o.sha256], ['Type', 'SHA-256'], ['File', o.type || ''], ['URL', (o.host || o.dst) + (o.path || '')]], packets: o.idx, advice: 'Confirmed malicious-file match. Isolate ' + o.src + ' and begin host forensics.' });
+      }
+    }
+
+    // Attach a first/last timestamp to every finding (from its referenced packets where present,
+    // otherwise from the activity window of the hosts it names) so the report can order them in time.
+    { const pos = new Map(); for (let i = 0; i < n; i++) pos.set(pkts[i].n, pkts[i].ts);
+      for (const f of findings) {
+        let lo = Infinity, hi = -Infinity;
+        for (const pn of f.packets) { const ts = pos.get(pn); if (ts != null) { if (ts < lo) lo = ts; if (ts > hi) hi = ts; } }
+        if (!isFinite(lo)) for (const h of f.hosts) { const hh = st.hosts.get(h); if (hh && isFinite(hh.first)) { if (hh.first < lo) lo = hh.first; if (hh.last > hi) hi = hh.last; } }
+        f.firstTs = isFinite(lo) ? lo : st.start; f.lastTs = isFinite(hi) ? hi : f.firstTs;
+      }
+    }
+
+    const order = { high: 0, medium: 1, low: 2, info: 3 };
+    findings.sort((a, b) => order[a.severity] - order[b.severity] || b.packets.length - a.packets.length);
+    findings.forEach((f, i) => f.id = i + 1);
+
+    // ---- sessions (one row per connection) and indicators for export
+    const sessions = [...conns.values()].sort((a, b) => a.start - b.start).slice(0, 20000).map(c => ({
+      src: c.src, sport: c.sport, dst: c.dst, dport: c.dport, proto: c.proto, start: c.start, dur: c.last - c.start, cBytes: c.cBytes, sBytes: c.sBytes, cPkts: c.cPkts, sPkts: c.sPkts,
+      name: c.sni || c.host || '', app: PORT_NAMES[c.dport] || '', partial: c.implicit, idx: c.idx, external: !isPrivate(c.dst),
+      retrans: c.hc ? c.hc.retrans : 0, ooo: c.hc ? c.hc.ooo : 0, dupAck: c.hc ? c.hc.dupAck : 0, zwin: c.hc ? c.hc.zwin : 0, rtt: c.hc ? c.hc.rtt : null,
+    }));
+    // ---- expert info / TCP health
+    const hcTot = { retrans: 0, ooo: 0, dupAck: 0, zwin: 0, rst: 0, dataPkts: 0, flows: 0, rtts: [] };
+    for (const c of conns.values()) { if (c.proto !== 'tcp' || !c.hc) continue; const h = c.hc; hcTot.flows++; hcTot.retrans += h.retrans; hcTot.ooo += h.ooo; hcTot.dupAck += h.dupAck; hcTot.zwin += h.zwin; hcTot.rst += h.rst; hcTot.dataPkts += h.dataPkts; if (h.rtt != null && h.rtt >= 0 && h.rtt < 10) hcTot.rtts.push(h.rtt); }
+    const tcpHealthSummary = { retrans: hcTot.retrans, ooo: hcTot.ooo, dupAck: hcTot.dupAck, zwin: hcTot.zwin, rst: hcTot.rst, dataPkts: hcTot.dataPkts, flows: hcTot.flows, retransPct: hcTot.dataPkts ? hcTot.retrans / hcTot.dataPkts * 100 : 0, medianRttMs: hcTot.rtts.length ? median(hcTot.rtts) * 1000 : null,
+      worst: [...conns.values()].filter(c => c.proto === 'tcp' && c.hc && (c.hc.retrans + c.hc.ooo + c.hc.zwin) > 0).sort((a, b) => (b.hc.retrans + b.hc.ooo + b.hc.zwin) - (a.hc.retrans + a.hc.ooo + a.hc.zwin)).slice(0, 20).map(c => ({ src: c.src, sport: c.sport, dst: c.dst, dport: c.dport, retrans: c.hc.retrans, ooo: c.hc.ooo, dupAck: c.hc.dupAck, zwin: c.hc.zwin, rtt: c.hc.rtt, dataPkts: c.hc.dataPkts, idx: c.idx.slice(0, 6) })) };
+    const ipNames = new Map();
+    for (const [dom, di] of domainIPs) for (const ip of di.ips) { let s = ipNames.get(ip); if (!s) { s = new Set(); ipNames.set(ip, s); } s.add(dom); }
+    for (const c of conns.values()) if (c.sni || c.host) { let s = ipNames.get(c.dst); if (!s) { s = new Set(); ipNames.set(c.dst, s); } s.add(c.sni || c.host); }
+    const findingHosts = new Map(); for (const f of findings) for (const h of f.hosts) { let s = findingHosts.get(h); if (!s) { s = []; findingHosts.set(h, s); } s.push(f.id); }
+    const iocIPs = [...st.hosts.values()].filter(h => !h.internal).map(h => ({ ip: h.ip, pkts: h.pkts + 0, bytesOut: h.bytesOut, bytesIn: h.bytesIn, first: h.first, last: h.last, names: [...(ipNames.get(h.ip) || [])].slice(0, 5), resolved: dnsAnswerIPs.has(h.ip), findings: findingHosts.get(h.ip) || [], intel: ipIntel(h.ip) })).sort((a, b) => (b.findings.length - a.findings.length) || ((b.bytesOut + b.bytesIn) - (a.bytesOut + a.bytesIn)));
+    const domQueries = new Map(); for (const g of dnsQ.values()) { let d = domQueries.get(g.domain); if (!d) { d = { domain: g.domain, queries: 0, clients: new Set(), subs: new Set(), types: new Map(), first: Infinity, last: 0 }; domQueries.set(g.domain, d); } d.queries += g.ts.length; d.clients.add(g.src); for (const s of g.subs) if (d.subs.size < 1000) d.subs.add(s); for (const [t, n] of g.types) inc(d.types, t, n); const mn = Math.min(...g.ts), mx = Math.max(...g.ts); if (mn < d.first) d.first = mn; if (mx > d.last) d.last = mx; }
+    const iocDomains = [...domQueries.values()].map(d => { const di = domainIPs.get(d.domain); return { domain: d.domain, queries: d.queries, clients: d.clients.size, subdomains: d.subs.size, types: [...d.types.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0] + ' ' + x[1]).join(', '), ips: di ? [...di.ips].slice(0, 6) : [], ipCount: di ? di.ips.size : 0, minTtl: di && isFinite(di.minTtl) ? di.minTtl : null, first: d.first, last: d.last, flagged: findings.some(f => f.title.includes(d.domain)) }; }).sort((a, b) => (b.flagged - a.flagged) || (b.queries - a.queries));
+    const iocNames = top(st.sni, 500).map(([name, n]) => ({ name, hellos: n }));
+
+    // ---- timeline
+    const bucketCount = Math.max(1, Math.min(120, Math.ceil(duration) || 1));
+    const bucket = duration > 0 ? duration / bucketCount : 1;
+    const timeline = new Array(bucketCount).fill(0).map((_, i) => ({ t: i * bucket, pkts: 0, bytes: 0 }));
+    for (let i = 0; i < n; i++) { const k = Math.min(bucketCount - 1, Math.floor((pkts[i].ts - st.start) / bucket)); timeline[k].pkts++; timeline[k].bytes += pkts[i].len; }
+
+    const sev = { high: 0, medium: 0, low: 0, info: 0 }; for (const f of findings) sev[f.severity]++;
+    return {
+      findings, severity: sev, thresholds: T,
+      summary: {
+        packets: n, bytes: st.bytes, duration, start: st.start, end: st.end, format: capture.format, linktype: capture.linktype, linktypeName: LINKTYPES[capture.linktype] || ('type ' + capture.linktype),
+        hosts: st.hosts.size, internalHosts: st.internalHosts, externalHosts: st.externalHosts, conversations: st.convs.size, warnings: capture.warnings || [],
+        avgPps: duration > 0 ? n / duration : n, avgBps: duration > 0 ? st.bytes * 8 / duration : 0,
+      },
+      protocols: top(st.protocols, 12),
+      timeline, bucket,
+      topTalkers: top(st.hosts, 10, h => h.bytesOut + h.bytesIn).map(([ip, h]) => h),
+      hosts: [...st.hosts.values()].sort((a, b) => (b.bytesOut + b.bytesIn) - (a.bytesOut + a.bytesIn)),
+      topConvs: top(st.convs, 10, c => c.bytes).map(([k, c]) => c),
+      topPorts: top(st.dstPorts, 10).map(([k, v]) => ({ port: k, count: v, name: PORT_NAMES[parseInt(k.split('/')[1], 10)] || '' })),
+      topDomains: top(st.dnsDomains, 10), topSni: top(st.sni, 10), topHttp: top(st.httpHosts, 10),
+      sessions, iocs: { ips: iocIPs, domains: iocDomains, names: iocNames },
+      artifacts: {
+        files: objects.map(o => ({ sha256: o.sha256, type: o.magic ? o.magic.type : 'by extension', bytes: o.bytes, partial: o.partial, host: o.host, path: o.path, src: o.src, dst: o.dst, ctype: o.ctype, dangerous: !!(o.magic && o.magic.danger) })),
+        certs: [...certByKey.values()].map(c => ({ subject: c.subject, issuer: c.issuer, sha1: c.sha1, notBefore: c.notBefore, notAfter: c.notAfter, selfSigned: c.selfSigned, sni: c.sni, dst: c.dst })),
+        credentials: credExposed.map(e => ({ scheme: e.scheme, src: e.src, dst: e.dst, users: [...e.users].slice(0, 8), count: e.count })),
+        ja3: [...ja3BySrc.entries()].flatMap(([src, m]) => [...m.entries()].map(([j, n]) => ({ src, ja3: j, count: n, known: KNOWN_JA3[j] || '' }))).slice(0, 500),
+        ja4: [...ja4BySrc.entries()].flatMap(([src, m]) => [...m.entries()].map(([j, n]) => ({ src, ja4: j, count: n }))).slice(0, 500),
+        ja3s: [...ja3sBySrv.entries()].flatMap(([dst, set]) => [...set].map(j => ({ dst, ja3s: j }))).slice(0, 500),
+        assets: [...assets.values()].map(a => ({ ip: a.ip, names: [...a.names].slice(0, 5), os: [...a.os], sources: [...a.sources] })),
+      },
+      graph: buildGraph(),
+      tcpHealth: tcpHealthSummary,
+      categories: (() => { const m = new Map(); for (const f of findings) inc(m, f.category); return [...m.entries()].map(([cat, n]) => ({ cat, n, sev: findings.filter(f => f.category === cat).reduce((w, f) => order[f.severity] < order[w] ? f.severity : w, 'info') })).sort((a, b) => order[a.sev] - order[b.sev] || b.n - a.n); })(),
+      protoTree: buildProtoTree(),
+    };
+
+    function buildProtoTree() {
+      const root = { name: 'Frame', pkts: 0, bytes: 0, kids: new Map() };
+      function node(parent, name) { let k = parent.kids.get(name); if (!k) { k = { name, pkts: 0, bytes: 0, kids: new Map() }; parent.kids.set(name, k); } return k; }
+      for (let i = 0; i < n; i++) {
+        const p = pkts[i]; root.pkts++; root.bytes += p.len;
+        const l3 = p.ip ? 'IPv' + p.ip.v : p.arp ? 'ARP' : (p.proto === 'LLDP' || p.proto === 'EAPOL' || p.proto === 'PPPoE') ? p.proto : 'Other';
+        const a = node(root, l3); a.pkts++; a.bytes += p.len;
+        if (p.ip) { const l4 = p.tcp ? 'TCP' : p.udp ? 'UDP' : p.icmp ? p.proto : protoName(p.ip.proto); const b = node(a, l4); b.pkts++; b.bytes += p.len; const app = (p.app && p.app !== l4) ? p.app : null; if (app) { const c = node(b, app); c.pkts++; c.bytes += p.len; } }
+      }
+      function toArr(m) { return [...m.values()].sort((x, y) => y.bytes - x.bytes).map(k => ({ name: k.name, pkts: k.pkts, bytes: k.bytes, kids: toArr(k.kids) })); }
+      return { name: root.name, pkts: root.pkts, bytes: root.bytes, kids: toArr(root.kids) };
+    }
+
+    function buildGraph() {
+      const OFFENSIVE = new Set(['Command and control', 'Covert channel', 'Data exfiltration', 'Malware delivery', 'Reconnaissance', 'Credential access', 'Credential attack', 'Lateral movement', 'Denial of service', 'Spoofing', 'Suspicious connection', 'Suspicious TLS', 'Evasion']);
+      const hostSev = new Map(); // ip -> {worst, cats:Set, fids:Set}
+      for (const f of findings) { if (f.severity === 'info') continue; for (const h of f.hosts) { if (!h || h.includes(':') && h.length > 39) continue; let e = hostSev.get(h); if (!e) { e = { worst: 'info', cats: new Set(), fids: new Set() }; hostSev.set(h, e); } if (order[f.severity] < order[e.worst]) e.worst = f.severity; e.cats.add(f.category); e.fids.add(f.id); } }
+      // choose nodes: all flagged hosts + top talkers up to a cap
+      const cap = 90;
+      const ranked = [...st.hosts.values()].sort((a, b) => (b.bytesOut + b.bytesIn) - (a.bytesOut + a.bytesIn));
+      const pick = new Set(); for (const h of hostSev.keys()) if (st.hosts.has(h)) pick.add(h);
+      for (const h of ranked) { if (pick.size >= cap) break; pick.add(h.ip); }
+      const nodes = [...pick].map(ip => { const h = st.hosts.get(ip) || { ip, pkts: 0, bytesOut: 0, bytesIn: 0, internal: isPrivate(ip) }; const sev = hostSev.get(ip); let role = h.internal ? 'internal' : 'external'; if (sev) { if (!h.internal && (sev.cats.has('Command and control') || sev.cats.has('Covert channel') || sev.cats.has('Data exfiltration') || sev.cats.has('Malware delivery'))) role = 'c2'; else if (h.internal) role = 'flagged'; else role = 'suspect'; } return { ip, internal: h.internal, bytes: h.bytesOut + h.bytesIn, pkts: h.pkts, role, sev: sev ? sev.worst : null, cats: sev ? [...sev.cats] : [], fids: sev ? [...sev.fids] : [] }; });
+      const inNode = new Set(nodes.map(n => n.ip));
+      const edges = [];
+      const convArr = [...st.convs.values()].sort((a, b) => b.bytes - a.bytes);
+      for (const c of convArr) { if (edges.length >= 300) break; if (!inNode.has(c.a) || !inNode.has(c.b)) continue; const an = nodes.find(n => n.ip === c.a), bn = nodes.find(n => n.ip === c.b); const bad = (an && (an.role === 'c2' || an.role === 'flagged' || an.role === 'suspect')) && (bn && (bn.role === 'c2' || bn.role === 'flagged' || bn.role === 'suspect')); edges.push({ a: c.a, b: c.b, bytes: c.bytes, protos: [...c.protos].slice(0, 3), bad: !!bad }); }
+      return { nodes, edges, truncated: st.hosts.size > nodes.length };
+    }
+  }
+
+  // ---------------------------------------------------------------- demo capture builder
+  function buildDemoPcap() {
+    const chunks = []; let total = 0;
+    function out(a) { chunks.push(a); total += a.length; }
+    const hdr = new Uint8Array(24); const dv = new DataView(hdr.buffer);
+    dv.setUint32(0, 0xa1b2c3d4, true); dv.setUint16(4, 2, true); dv.setUint16(6, 4, true); dv.setUint32(16, 65535, true); dv.setUint32(20, 1, true);
+    out(hdr);
+    function rec(ts, frame) { const h = new Uint8Array(16); const d = new DataView(h.buffer); d.setUint32(0, Math.floor(ts), true); d.setUint32(4, Math.round((ts % 1) * 1e6) % 1000000, true); d.setUint32(8, frame.length, true); d.setUint32(12, frame.length, true); out(h); out(frame); }
+    const cat = (...arrs) => { const n = arrs.reduce((a, b) => a + b.length, 0); const r = new Uint8Array(n); let o = 0; for (const a of arrs) { r.set(a, o); o += a.length; } return r; };
+    const m2b = m => new Uint8Array(m.split(':').map(x => parseInt(x, 16)));
+    const i2b = ip => new Uint8Array(ip.split('.').map(Number));
+    const be16 = v => new Uint8Array([(v >> 8) & 255, v & 255]);
+    const be32 = v => new Uint8Array([(v >>> 24) & 255, (v >> 16) & 255, (v >> 8) & 255, v & 255]);
+    const str = s => new Uint8Array([...s].map(c => c.charCodeAt(0)));
+    const macOf = {}; let macSeq = 2;
+    function macFor(ip) { if (!macOf[ip]) { macOf[ip] = isPrivate(ip) ? 'aa:bb:cc:00:00:' + (macSeq++).toString(16).padStart(2, '0') : 'aa:bb:cc:00:00:01'; } return macOf[ip]; }
+    macOf['10.0.0.1'] = 'aa:bb:cc:00:00:01';
+    function csum(b) { let s = 0; for (let i = 0; i < b.length; i += 2) s += (b[i] << 8) | (b[i + 1] || 0); while (s >> 16) s = (s & 0xffff) + (s >> 16); return (~s) & 0xffff; }
+    let ipid = 1000;
+    function ipv4(src, dst, proto, payload, ttl, frag) {
+      const h = new Uint8Array(20); h[0] = 0x45; const tl = 20 + payload.length; h[2] = tl >> 8; h[3] = tl & 255; h[4] = (ipid >> 8) & 255; h[5] = ipid & 255; ipid++;
+      const ff = frag || 0x4000; h[6] = ff >> 8; h[7] = ff & 255; h[8] = ttl || 64; h[9] = proto; h.set(i2b(src), 12); h.set(i2b(dst), 16);
+      const c = csum(h); h[10] = c >> 8; h[11] = c & 255; return cat(h, payload);
+    }
+    function eth(src, dst, type, payload) { return cat(m2b(dst), m2b(src), be16(type), payload); }
+    function ipFrame(src, dst, proto, payload, ttl, frag, smac, dmac) { return eth(smac || macFor(src), dmac || (isPrivate(dst) ? macFor(dst) : macFor('10.0.0.1')), 0x0800, ipv4(src, dst, proto, payload, ttl, frag)); }
+    function tcp(sport, dport, flags, seq, ack, payload, win) { const h = new Uint8Array(20); h.set(be16(sport), 0); h.set(be16(dport), 2); h.set(be32(seq >>> 0), 4); h.set(be32(ack >>> 0), 8); h[12] = 0x50; h[13] = flags; h.set(be16(win || 65535), 14); return cat(h, payload || new Uint8Array(0)); }
+    function udp(sport, dport, payload) { const h = new Uint8Array(8); h.set(be16(sport), 0); h.set(be16(dport), 2); h.set(be16(8 + payload.length), 4); return cat(h, payload); }
+    function icmp(type, code, id, seq, data) { const h = new Uint8Array(8); h[0] = type; h[1] = code; h.set(be16(id), 4); h.set(be16(seq), 6); const p = cat(h, data); const c = csum(p); p[2] = c >> 8; p[3] = c & 255; return p; }
+    function arp(op, sha, spa, tha, tpa, dmac) { const h = cat(be16(1), be16(0x0800), new Uint8Array([6, 4]), be16(op), m2b(sha), i2b(spa), m2b(tha), i2b(tpa)); return eth(sha, dmac || (op === 1 ? 'ff:ff:ff:ff:ff:ff' : tha), 0x0806, h); }
+    function dnsName(name) { const parts = name.split('.'); const arr = []; for (const p of parts) { arr.push(new Uint8Array([p.length])); arr.push(str(p)); } arr.push(new Uint8Array([0])); return cat(...arr); }
+    function dnsQuery(id, name, type) { return cat(be16(id), be16(0x0100), be16(1), be16(0), be16(0), be16(0), dnsName(name), be16(type), be16(1)); }
+    function dnsResp(id, name, type, rcode, answer) { const an = answer ? 1 : 0; let r = cat(be16(id), be16(0x8180 | rcode), be16(1), be16(an), be16(0), be16(0), dnsName(name), be16(type), be16(1)); if (answer) r = cat(r, new Uint8Array([0xc0, 0x0c]), be16(type), be16(1), be32(300), be16(answer.length), answer); return r; }
+    function tlsClientHello(sni) { const ext = cat(be16(0), be16(sni.length + 5), be16(sni.length + 3), new Uint8Array([0]), be16(sni.length), str(sni)); const body = cat(be16(0x0303), new Uint8Array(32).map(() => Math.floor(Math.random() * 256)), new Uint8Array([0]), be16(4), new Uint8Array([0x13, 0x01, 0x13, 0x02]), new Uint8Array([1, 0]), be16(ext.length), ext); const hs = cat(new Uint8Array([1, 0, (body.length >> 8) & 255, body.length & 255]), body); return cat(new Uint8Array([0x16, 3, 1]), be16(hs.length), hs); }
+    function tlsAppData(n) { const d = new Uint8Array(n).map(() => Math.floor(Math.random() * 256)); return cat(new Uint8Array([0x17, 3, 3]), be16(n), d); }
+
+    let t = 1761600000; // base epoch
+    const events = [];
+    const ev = (ts, frame) => events.push([ts, frame]);
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    const sportOf = {}; function sport(ip) { sportOf[ip] = (sportOf[ip] || 40000) + 1; return sportOf[ip]; }
+
+    // --- normal browsing from four workstations
+    const sites = [['www.example.com', '93.184.216.34'], ['cdn.jsdelivr.net', '104.16.123.96'], ['mail.google.com', '142.250.74.37'], ['github.com', '140.82.121.4'], ['api.weather.gov', '23.0.164.32'], ['www.wikipedia.org', '208.80.154.224']];
+    const users = ['10.0.0.11', '10.0.0.12', '10.0.0.13', '10.0.0.14'];
+    let qid = 1;
+    for (let k = 0; k < 220; k++) {
+      const u = users[k % users.length]; const [name, ip] = sites[Math.floor(Math.random() * sites.length)];
+      const ts = t + rnd(0, 600);
+      const id = qid++; const sp = sport(u);
+      ev(ts, ipFrame(u, '10.0.0.1', 17, udp(sp, 53, dnsQuery(id, name, 1))));
+      ev(ts + 0.012, ipFrame('10.0.0.1', u, 17, udp(53, sp, dnsResp(id, name, 1, 0, i2b(ip)))));
+      const s = sport(u); const seq = Math.floor(Math.random() * 1e9);
+      ev(ts + 0.02, ipFrame(u, ip, 6, tcp(s, 443, 0x02, seq, 0)));
+      ev(ts + 0.045, ipFrame(ip, u, 6, tcp(443, s, 0x12, 1, seq + 1), 52));
+      ev(ts + 0.046, ipFrame(u, ip, 6, tcp(s, 443, 0x10, seq + 1, 2)));
+      ev(ts + 0.047, ipFrame(u, ip, 6, tcp(s, 443, 0x18, seq + 1, 2, tlsClientHello(name))));
+      ev(ts + 0.08, ipFrame(ip, u, 6, tcp(443, s, 0x18, 2, seq + 300, cat(new Uint8Array([0x16, 3, 3, 0, 0x5a, 2, 0, 0, 0x56, 3, 3]), new Uint8Array(83))), 52));
+      const nIn = 3 + Math.floor(Math.random() * 12);
+      for (let j = 0; j < nIn; j++) { ev(ts + 0.1 + j * 0.01, ipFrame(ip, u, 6, tcp(443, s, 0x18, 100 + j * 1400, seq + 400, tlsAppData(1300 + Math.floor(Math.random() * 100))), 52)); if (j % 2) ev(ts + 0.105 + j * 0.01, ipFrame(u, ip, 6, tcp(s, 443, 0x10, seq + 400, 100 + j * 1400))); }
+      ev(ts + 0.3 + nIn * 0.01, ipFrame(u, ip, 6, tcp(s, 443, 0x11, seq + 400, 5000)));
+      ev(ts + 0.33 + nIn * 0.01, ipFrame(ip, u, 6, tcp(443, s, 0x11, 5000, seq + 401), 52));
+    }
+    // --- normal ARP
+    for (let k = 0; k < 25; k++) { const u = users[k % users.length]; const ts = t + rnd(0, 600); ev(ts, arp(1, macFor(u), u, '00:00:00:00:00:00', '10.0.0.1')); ev(ts + 0.001, arp(2, macFor('10.0.0.1'), '10.0.0.1', macFor(u), u)); }
+    // --- NTP (legit periodic, must not be flagged)
+    for (let k = 0; k < 10; k++) { const ts = t + k * 64; const sp = 123; ev(ts, ipFrame('10.0.0.11', '129.6.15.28', 17, udp(sp, 123, new Uint8Array(48)))); ev(ts + 0.03, ipFrame('129.6.15.28', '10.0.0.11', 17, udp(123, sp, new Uint8Array(48)), 55)); }
+
+    // --- ping sweep + port scan + xmas from 10.0.0.66
+    const scanner = '10.0.0.66';
+    for (let h = 1; h <= 30; h++) { const ts = t + 50 + h * 0.02; ev(ts, ipFrame(scanner, '10.0.0.' + h, 1, icmp(8, 0, 7, h, new Uint8Array(16)))); if ([1, 5, 11, 12, 13, 14, 23, 42].includes(h)) ev(ts + 0.001, ipFrame('10.0.0.' + h, scanner, 1, icmp(0, 0, 7, h, new Uint8Array(16)))); }
+    const openPorts = new Set([21, 22, 80, 443, 445]);
+    const scanPorts = []; for (let p = 1; p <= 1024; p += 5) scanPorts.push(p); openPorts.forEach(p => scanPorts.push(p));
+    scanPorts.forEach((p, i) => { const ts = t + 60 + i * 0.008; const sp = sport(scanner); ev(ts, ipFrame(scanner, '10.0.0.5', 6, tcp(sp, p, 0x02, 12345, 0, null, 1024))); if (openPorts.has(p)) { ev(ts + 0.001, ipFrame('10.0.0.5', scanner, 6, tcp(p, sp, 0x12, 777, 12346))); ev(ts + 0.002, ipFrame(scanner, '10.0.0.5', 6, tcp(sp, p, 0x04, 12346, 0))); } else ev(ts + 0.001, ipFrame('10.0.0.5', scanner, 6, tcp(p, sp, 0x14, 0, 12346))); });
+    for (let i = 0; i < 12; i++) { const ts = t + 64 + i * 0.05; ev(ts, ipFrame(scanner, '10.0.0.5', 6, tcp(sport(scanner), [22, 80, 443, 8080][i % 4], 0x29, 99, 0))); }
+
+    // --- SYN flood against web server from spoofed sources
+    for (let i = 0; i < 700; i++) { const ts = t + 90 + i * 0.02; const src = (Math.floor(rnd(1, 223))) + '.' + Math.floor(rnd(0, 255)) + '.' + Math.floor(rnd(0, 255)) + '.' + Math.floor(rnd(1, 254)); if (isPrivate(src)) continue; ev(ts, ipFrame(src, '10.0.0.5', 6, tcp(Math.floor(rnd(1024, 65000)), 80, 0x02, Math.floor(Math.random() * 1e9), 0), Math.floor(rnd(40, 250)))); }
+
+    // --- ARP poisoning of 10.0.0.11 by attacker 10.0.0.99
+    const atk = 'aa:bb:cc:66:66:66';
+    for (let i = 0; i < 40; i++) { const ts = t + 120 + i * 2; ev(ts, arp(2, atk, '10.0.0.1', macFor('10.0.0.11'), '10.0.0.11')); ev(ts + 0.01, arp(2, atk, '10.0.0.11', macFor('10.0.0.1'), '10.0.0.1')); }
+
+    // --- DNS tunnelling from 10.0.0.23
+    const b32 = 'abcdefghijklmnopqrstuvwxyz234567';
+    for (let i = 0; i < 45; i++) { const ts = t + 150 + i * 2.3; let sub = ''; for (let j = 0; j < 48; j++) sub += b32[Math.floor(Math.random() * 32)]; const name = sub.slice(0, 24) + '.' + sub.slice(24) + '.tun.updates-cdn-sync.net'; const id = qid++; const sp = sport('10.0.0.23'); ev(ts, ipFrame('10.0.0.23', '10.0.0.1', 17, udp(sp, 53, dnsQuery(id, name, 16)))); let txt = ''; for (let j = 0; j < 60; j++) txt += b32[Math.floor(Math.random() * 32)]; ev(ts + 0.09, ipFrame('10.0.0.1', '10.0.0.23', 17, udp(53, sp, dnsResp(id, name, 16, 0, cat(new Uint8Array([txt.length]), str(txt)))))); }
+
+    // --- DGA-style NXDOMAIN storm from 10.0.0.37
+    for (let i = 0; i < 40; i++) { const ts = t + 200 + i * 1.1; let d = ''; for (let j = 0; j < 12; j++) d += 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]; const name = d + ['.com', '.net', '.biz', '.info'][i % 4]; const id = qid++; const sp = sport('10.0.0.37'); ev(ts, ipFrame('10.0.0.37', '10.0.0.1', 17, udp(sp, 53, dnsQuery(id, name, 1)))); ev(ts + 0.05, ipFrame('10.0.0.1', '10.0.0.37', 17, udp(53, sp, dnsResp(id, name, 1, 3, null)))); }
+
+    // --- beaconing from 10.0.0.42 to 203.0.113.9:443 every 30 s
+    for (let i = 0; i < 20; i++) { const ts = t + 5 + i * 30 + rnd(-0.4, 0.4); const s = sport('10.0.0.42'); const seq = 1000 * i; ev(ts, ipFrame('10.0.0.42', '203.0.113.9', 6, tcp(s, 443, 0x02, seq, 0))); ev(ts + 0.09, ipFrame('203.0.113.9', '10.0.0.42', 6, tcp(443, s, 0x12, 1, seq + 1), 49)); ev(ts + 0.091, ipFrame('10.0.0.42', '203.0.113.9', 6, tcp(s, 443, 0x18, seq + 1, 2, tlsClientHello('cdn-metrics.io')))); ev(ts + 0.18, ipFrame('203.0.113.9', '10.0.0.42', 6, tcp(443, s, 0x18, 2, seq + 200, tlsAppData(120)), 49)); ev(ts + 0.2, ipFrame('10.0.0.42', '203.0.113.9', 6, tcp(s, 443, 0x11, seq + 200, 130))); }
+
+    // --- jittered beaconing from 10.0.0.45 to 203.0.113.77:443: 45 s sleep with 40% jitter
+    { let ts = t + 3; for (let i = 0; i < 14; i++) { const s = sport('10.0.0.45'); const seq = 5000 * i; ev(ts, ipFrame('10.0.0.45', '203.0.113.77', 6, tcp(s, 443, 0x02, seq, 0))); ev(ts + 0.08, ipFrame('203.0.113.77', '10.0.0.45', 6, tcp(443, s, 0x12, 1, seq + 1), 51)); ev(ts + 0.081, ipFrame('10.0.0.45', '203.0.113.77', 6, tcp(s, 443, 0x18, seq + 1, 2, tlsClientHello('static-assets.example-cdn.net')))); ev(ts + 0.17, ipFrame('203.0.113.77', '10.0.0.45', 6, tcp(443, s, 0x18, 2, seq + 200, tlsAppData(90 + Math.floor(Math.random() * 60))), 51)); ev(ts + 0.19, ipFrame('10.0.0.45', '203.0.113.77', 6, tcp(s, 443, 0x11, seq + 200, 130))); ts += 45 * (1 - Math.random() * 0.4); } }
+
+    // --- rotating-destination beaconing from 10.0.0.52: one SNI, four IPs, ~60 s jittered sleep
+    { const rotIps = ['45.77.12.9', '45.77.88.4', '103.21.44.7', '198.51.100.212']; let ts = t + 8; for (let i = 0; i < 16; i++) { const dst = rotIps[i % rotIps.length]; const s = sport('10.0.0.52'); const seq = 7000 * i; ev(ts, ipFrame('10.0.0.52', dst, 6, tcp(s, 443, 0x02, seq, 0))); ev(ts + 0.08, ipFrame(dst, '10.0.0.52', 6, tcp(443, s, 0x12, 1, seq + 1), 50)); ev(ts + 0.081, ipFrame('10.0.0.52', dst, 6, tcp(s, 443, 0x18, seq + 1, 2, tlsClientHello('cdn-edge.content-delivery-net.com')))); ev(ts + 0.17, ipFrame(dst, '10.0.0.52', 6, tcp(443, s, 0x18, 2, seq + 200, tlsAppData(100 + Math.floor(Math.random() * 50))), 50)); ev(ts + 0.19, ipFrame('10.0.0.52', dst, 6, tcp(s, 443, 0x11, seq + 200, 130))); ts += 60 * (1 - Math.random() * 0.35); } }
+
+    // --- exfiltration from 10.0.0.31 to 198.51.100.7:4444
+    { const s = sport('10.0.0.31'); const dst = '198.51.100.7'; let ts = t + 300; let seq = 500; ev(ts, ipFrame('10.0.0.31', dst, 6, tcp(s, 4444, 0x02, seq, 0))); ev(ts + 0.1, ipFrame(dst, '10.0.0.31', 6, tcp(4444, s, 0x12, 1, seq + 1), 48)); ev(ts + 0.101, ipFrame('10.0.0.31', dst, 6, tcp(s, 4444, 0x10, seq + 1, 2))); seq++; for (let i = 0; i < 1000; i++) { ts += 0.03; const d = new Uint8Array(1400).map(() => Math.floor(Math.random() * 256)); ev(ts, ipFrame('10.0.0.31', dst, 6, tcp(s, 4444, 0x18, seq, 2, d))); seq += 1400; if (i % 4 === 3) ev(ts + 0.01, ipFrame(dst, '10.0.0.31', 6, tcp(4444, s, 0x10, 2, seq), 48)); } }
+
+    // --- cleartext credentials
+    { const s = sport('10.0.0.12'); const seq = 77; const ts = t + 330; ev(ts, ipFrame('10.0.0.12', '10.0.0.5', 6, tcp(s, 80, 0x02, seq, 0))); ev(ts + 0.01, ipFrame('10.0.0.5', '10.0.0.12', 6, tcp(80, s, 0x12, 1, seq + 1))); ev(ts + 0.02, ipFrame('10.0.0.12', '10.0.0.5', 6, tcp(s, 80, 0x18, seq + 1, 2, str('GET /admin/ HTTP/1.1\r\nHost: intranet.corp.local\r\nUser-Agent: Mozilla/5.0\r\nAuthorization: Basic amFuZTpTdW1tZXIyMDI2IQ==\r\n\r\n')))); ev(ts + 0.04, ipFrame('10.0.0.5', '10.0.0.12', 6, tcp(80, s, 0x18, 2, seq + 120, str('HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 12\r\n\r\n<html></html>')))); }
+    { const s = sport('10.0.0.13'); const seq = 88; const ts = t + 400; ev(ts, ipFrame('10.0.0.13', '10.0.0.5', 6, tcp(s, 21, 0x02, seq, 0))); ev(ts + 0.01, ipFrame('10.0.0.5', '10.0.0.13', 6, tcp(21, s, 0x12, 1, seq + 1))); ev(ts + 0.02, ipFrame('10.0.0.5', '10.0.0.13', 6, tcp(21, s, 0x18, 1, seq + 1, str('220 FTP server ready\r\n')))); ev(ts + 0.5, ipFrame('10.0.0.13', '10.0.0.5', 6, tcp(s, 21, 0x18, seq + 1, 22, str('USER backupadmin\r\n')))); ev(ts + 0.55, ipFrame('10.0.0.5', '10.0.0.13', 6, tcp(21, s, 0x18, 22, seq + 18, str('331 Password required\r\n')))); ev(ts + 1.2, ipFrame('10.0.0.13', '10.0.0.5', 6, tcp(s, 21, 0x18, seq + 18, 45, str('PASS hunter2\r\n')))); ev(ts + 1.25, ipFrame('10.0.0.5', '10.0.0.13', 6, tcp(21, s, 0x18, 45, seq + 31, str('230 Login successful\r\n')))); }
+
+    // --- ICMP tunnel from 10.0.0.77
+    for (let i = 0; i < 9; i++) { const ts = t + 420 + i * 3; const d = new Uint8Array(900).map(() => Math.floor(Math.random() * 256)); ev(ts, ipFrame('10.0.0.77', '8.8.8.8', 1, icmp(8, 0, 31, i, d))); ev(ts + 0.04, ipFrame('8.8.8.8', '10.0.0.77', 1, icmp(0, 0, 31, i, d), 113)); }
+
+    // --- SSH brute force from 10.0.0.66 against 10.0.0.5
+    for (let i = 0; i < 35; i++) { const ts = t + 480 + i * 0.9; const s = sport('10.0.0.88'); const seq = 400 + i; ev(ts, ipFrame('10.0.0.88', '10.0.0.5', 6, tcp(s, 22, 0x02, seq, 0))); ev(ts + 0.01, ipFrame('10.0.0.5', '10.0.0.88', 6, tcp(22, s, 0x12, 1, seq + 1))); ev(ts + 0.02, ipFrame('10.0.0.88', '10.0.0.5', 6, tcp(s, 22, 0x18, seq + 1, 2, str('SSH-2.0-libssh_0.9.6\r\n')))); ev(ts + 0.6, ipFrame('10.0.0.5', '10.0.0.88', 6, tcp(22, s, 0x14, 2, seq + 25))); }
+
+    // --- malware executable download over HTTP (10.0.0.14 pulls update.exe = MZ/PE) from 45.9.148.30
+    { const s = sport('10.0.0.14'); const dst = '45.9.148.30'; const ts = t + 250; let seq = 10;
+      ev(ts, ipFrame('10.0.0.14', dst, 6, tcp(s, 80, 0x02, seq, 0))); ev(ts + 0.02, ipFrame(dst, '10.0.0.14', 6, tcp(80, s, 0x12, 1, seq + 1), 50));
+      ev(ts + 0.03, ipFrame('10.0.0.14', dst, 6, tcp(s, 80, 0x18, seq + 1, 2, str('GET /download/update.exe HTTP/1.1\r\nHost: cdn.fake-update.net\r\nUser-Agent: Mozilla/5.0\r\n\r\n')))); seq += 80;
+      const pe = new Uint8Array(1200); pe[0] = 0x4d; pe[1] = 0x5a; pe.set(str('This program cannot be run in DOS mode'), 78); for (let i = 200; i < 1200; i++) pe[i] = Math.floor(Math.random() * 256);
+      const body = cat(str('HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 1200\r\n\r\n'), pe);
+      ev(ts + 0.07, ipFrame(dst, '10.0.0.14', 6, tcp(80, s, 0x18, 2, seq, body), 50));
+      ev(ts + 0.1, ipFrame('10.0.0.14', dst, 6, tcp(s, 80, 0x11, seq, 2 + body.length))); }
+
+    // --- self-signed, expired TLS certificate presented by C2 at 198.51.100.44 to 10.0.0.19
+    { const s = sport('10.0.0.19'); const dst = '198.51.100.44'; const ts = t + 270; const seq = 5;
+      const der = (tag, ...parts) => { const body = cat(...parts); let len; const L = body.length; if (L < 128) len = new Uint8Array([L]); else if (L < 256) len = new Uint8Array([0x81, L]); else len = new Uint8Array([0x82, (L >> 8) & 255, L & 255]); return cat(new Uint8Array([tag]), len, body); };
+      const cn = name => der(0x31, der(0x30, der(0x06, new Uint8Array([0x55, 0x04, 0x03])), der(0x0c, str(name))));
+      const nm = name => der(0x30, cn(name));
+      const utct = s2 => der(0x17, str(s2));
+      const validity = der(0x30, utct('200101000000Z'), utct('210101000000Z')); // expired 2021
+      const who = 'evil-c2.example';
+      const tbs = der(0x30, der(0xa0, der(0x02, new Uint8Array([2]))), der(0x02, new Uint8Array([0x13, 0x37])), der(0x30, der(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 1, 1, 11])), der(0x05)), nm(who), validity, nm(who), der(0x30, der(0x30, der(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 1, 1, 1])), der(0x05)), der(0x03, new Uint8Array([0, 0x30, 0x03, 0x02, 0x01, 0x01]))));
+      const certDer = der(0x30, tbs, der(0x30, der(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 1, 1, 11])), der(0x05)), der(0x03, cat(new Uint8Array([0]), new Uint8Array(16))));
+      const certsBody = cat(new Uint8Array([(certDer.length >> 16) & 255, (certDer.length >> 8) & 255, certDer.length & 255]), certDer);
+      const certMsg = cat(new Uint8Array([11, (certsBody.length + 3 >> 16) & 255, (certsBody.length + 3 >> 8) & 255, (certsBody.length + 3) & 255, (certsBody.length >> 16) & 255, (certsBody.length >> 8) & 255, certsBody.length & 255]), certsBody);
+      const shBody = cat(be16(0x0303), new Uint8Array(32), new Uint8Array([0]), be16(0x002f), new Uint8Array([0]));
+      const sh = cat(new Uint8Array([2, (shBody.length >> 16) & 255, (shBody.length >> 8) & 255, shBody.length & 255]), shBody);
+      const rec = (hs2) => cat(new Uint8Array([0x16, 3, 3]), be16(hs2.length), hs2);
+      ev(ts, ipFrame('10.0.0.19', dst, 6, tcp(s, 443, 0x02, seq, 0))); ev(ts + 0.02, ipFrame(dst, '10.0.0.19', 6, tcp(443, s, 0x12, 1, seq + 1), 50));
+      ev(ts + 0.03, ipFrame('10.0.0.19', dst, 6, tcp(s, 443, 0x18, seq + 1, 2, tlsClientHello('secure-login-update.example'))));
+      ev(ts + 0.06, ipFrame(dst, '10.0.0.19', 6, tcp(443, s, 0x18, 2, seq + 300, cat(rec(sh), rec(certMsg))), 50)); }
+
+    // --- NTLM authentication over SMB (10.0.0.21 → 10.0.0.5), captured Net-NTLMv2
+    { const s = sport('10.0.0.21'); const dst = '10.0.0.5'; const ts = t + 285; const seq = 3;
+      const u16le = v => new Uint8Array([v & 255, (v >> 8) & 255]); const u32le = v => new Uint8Array([v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >> 24) & 255]);
+      const utf16 = s2 => { const a = new Uint8Array(s2.length * 2); for (let i = 0; i < s2.length; i++) a[i * 2] = s2.charCodeAt(i); return a; };
+      const dom = utf16('CORP'), usr = utf16('jadmin');
+      const base = 64; const domOff = base, usrOff = base + dom.length;
+      const fields = cat(u16le(dom.length), u16le(dom.length), u32le(domOff), u16le(usr.length), u16le(usr.length), u32le(usrOff));
+      // NTLMSSP header(8) + type(4) + Lm(8)+Nt(8)+Domain(8)+User(8)+Ws(8)+... pad to base then dom/usr
+      let msg = cat(str('NTLMSSP\x00'), u32le(3), new Uint8Array(8), new Uint8Array(8), fields.subarray(0, 8), fields.subarray(8, 16), new Uint8Array(8));
+      const pad = new Uint8Array(Math.max(0, base - msg.length)); msg = cat(msg, pad, dom, usr);
+      const smb = cat(new Uint8Array([0, 0, 0, msg.length + 8]), str('\xfeSMB'), msg);
+      ev(ts, ipFrame('10.0.0.21', dst, 6, tcp(s, 445, 0x02, seq, 0))); ev(ts + 0.01, ipFrame(dst, '10.0.0.21', 6, tcp(445, s, 0x12, 1, seq + 1)));
+      ev(ts + 0.02, ipFrame('10.0.0.21', dst, 6, tcp(s, 445, 0x18, seq + 1, 2, smb)));
+      // --- SMB admin pipe (svcctl) + ADMIN$ share for lateral movement
+      ev(ts + 0.1, ipFrame('10.0.0.21', dst, 6, tcp(s, 445, 0x18, seq + 1 + smb.length, 2, str('\xfeSMB....\\PIPE\\svcctl........\\\\10.0.0.5\\ADMIN$')))); }
+
+    // --- Kerberoasting: 10.0.0.23 requests many RC4 service tickets from KDC 10.0.0.2
+    for (let i = 0; i < 14; i++) { const ts = t + 300 + i * 0.4; const s = sport('10.0.0.23'); const tgs = cat(new Uint8Array([0x6c, 0x82, 1, 0]), str('krbtgt'), new Uint8Array([0xa1, 0x03, 0x02, 0x01, 0x17]), new Uint8Array(40).map(() => Math.floor(Math.random() * 256))); ev(ts, ipFrame('10.0.0.23', '10.0.0.2', 17, udp(s, 88, tgs))); ev(ts + 0.02, ipFrame('10.0.0.2', '10.0.0.23', 17, udp(88, s, new Uint8Array(120)), 55)); }
+
+    // --- DHCP request advertising hostname FINANCE-WS07 (asset inventory)
+    { const ts = t + 2; const disc = cat(new Uint8Array([1, 1, 6, 0]), new Uint8Array(4).map(() => Math.floor(Math.random() * 256)), new Uint8Array(28), m2b('aa:bb:cc:00:00:21'), new Uint8Array(10 + 64 + 128), new Uint8Array([0x63, 0x82, 0x53, 0x63]), new Uint8Array([53, 1, 3]), new Uint8Array([12, 12]), str('FINANCE-WS07'), new Uint8Array([60, 4]), str('MSFT'), new Uint8Array([255])); ev(ts, ipFrame('10.0.0.21', '10.0.0.1', 17, udp(68, 67, disc))); }
+
+    // --- HTTP CONNECT tunnel through internal proxy to an external host
+    { const s = sport('10.0.0.26'); const dst = '10.0.0.9'; const ts = t + 360; const seq = 7; ev(ts, ipFrame('10.0.0.26', dst, 6, tcp(s, 8080, 0x02, seq, 0))); ev(ts + 0.01, ipFrame(dst, '10.0.0.26', 6, tcp(8080, s, 0x12, 1, seq + 1))); ev(ts + 0.02, ipFrame('10.0.0.26', dst, 6, tcp(s, 8080, 0x18, seq + 1, 2, str('CONNECT 185.220.101.4:9001 HTTP/1.1\r\nHost: 185.220.101.4:9001\r\n\r\n')))); }
+
+    // --- punycode look-alike domain query
+    { const id = qid++; const s = sport('10.0.0.27'); ev(t + 365, ipFrame('10.0.0.27', '10.0.0.1', 17, udp(s, 53, dnsQuery(id, 'xn--pple-43d.com', 1)))); ev(t + 365.05, ipFrame('10.0.0.1', '10.0.0.27', 17, udp(53, s, dnsResp(id, 'xn--pple-43d.com', 1, 0, i2b('45.9.148.99'))))); }
+
+    // --- DoH to dns.google (covert DNS)
+    for (let i = 0; i < 4; i++) { const s = sport('10.0.0.28'); const ts = t + 370 + i * 5; const seq = 100 * i; ev(ts, ipFrame('10.0.0.28', '8.8.8.8', 6, tcp(s, 443, 0x02, seq, 0))); ev(ts + 0.02, ipFrame('8.8.8.8', '10.0.0.28', 6, tcp(443, s, 0x12, 1, seq + 1), 55)); ev(ts + 0.03, ipFrame('10.0.0.28', '8.8.8.8', 6, tcp(s, 443, 0x18, seq + 1, 2, tlsClientHello('dns.google')))); }
+
+    // --- cleartext secret in an HTTP POST (API key) from 10.0.0.24
+    { const s = sport('10.0.0.24'); const dst = '10.0.0.5'; const ts = t + 335; const seq = 11; ev(ts, ipFrame('10.0.0.24', dst, 6, tcp(s, 80, 0x02, seq, 0))); ev(ts + 0.01, ipFrame(dst, '10.0.0.24', 6, tcp(80, s, 0x12, 1, seq + 1))); ev(ts + 0.02, ipFrame('10.0.0.24', dst, 6, tcp(s, 80, 0x18, seq + 1, 2, str('POST /api/sync HTTP/1.1\r\nHost: intranet.corp.local\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 64\r\n\r\ntoken=AKIAIOSFODNN7EXAMPLE&password=Sup3rS3cret!&card=4111111111111111')))); }
+
+    // --- SNMP v2c with a non-default community from 10.0.0.26 to switch 10.0.0.3
+    for (let i = 0; i < 3; i++) { const ts = t + 345 + i; const s = sport('10.0.0.26'); const comm = 'r0ut3r-rw'; const snmp = cat(new Uint8Array([0x30, 0x29, 0x02, 0x01, 0x01, 0x04, comm.length]), str(comm), new Uint8Array([0xa0, 0x1c, 0x02, 0x04, 0, 0, 0, 1, 0x02, 0x01, 0, 0x02, 0x01, 0, 0x30, 0x0e, 0x30, 0x0c, 0x06, 0x08, 0x2b, 6, 1, 2, 1, 1, 1, 0, 0x05, 0])); ev(ts, ipFrame('10.0.0.26', '10.0.0.3', 17, udp(s, 161, snmp))); }
+
+    // --- rogue DHCP: a second DHCP server (10.0.0.250) also answers
+    { const ts = t + 4; const offer = cat(new Uint8Array([2, 1, 6, 0]), new Uint8Array(4), new Uint8Array(28), m2b('aa:bb:cc:00:00:30'), new Uint8Array(202), new Uint8Array([0x63, 0x82, 0x53, 0x63]), new Uint8Array([53, 1, 2]), new Uint8Array([54, 4]), i2b('10.0.0.250'), new Uint8Array([255])); ev(ts, ipFrame('10.0.0.250', '10.0.0.21', 17, udp(67, 68, offer))); ev(ts + 0.5, ipFrame('10.0.0.1', '10.0.0.21', 17, udp(67, 68, offer))); }
+
+    // --- GRE tunnel carrying inner ICMP (decapsulation)
+    { const ts = t + 390; const innerIp = ipv4('192.168.50.10', '192.168.50.20', 1, icmp(8, 0, 9, 1, new Uint8Array(16))); const gre = cat(be16(0), be16(0x0800), innerIp); ev(ts, ipFrame('10.0.0.40', '203.0.113.40', 47, gre)); }
+    // --- VXLAN (UDP 4789) carrying an inner Ethernet/IPv4 frame
+    { const ts = t + 392; const s = sport('10.0.0.41'); const innerIp = ipv4('172.16.5.5', '172.16.5.9', 6, tcp(5000, 80, 0x02, 1, 0)); const innerEth = cat(m2b('02:00:00:00:00:02'), m2b('02:00:00:00:00:01'), be16(0x0800), innerIp); const vxlan = cat(new Uint8Array([0x08, 0, 0, 0, 0, 0, 100, 0]), innerEth); ev(ts, ipFrame('10.0.0.41', '203.0.113.41', 17, udp(s, 4789, vxlan))); }
+
+    // --- inbound reverse shell: external 91.92.240.3 connects IN to 10.0.0.30:4444
+    { const ext = '91.92.240.3'; const s = 51000; const ts = t + 380; let seq = 1; ev(ts, ipFrame(ext, '10.0.0.30', 6, tcp(s, 4444, 0x02, seq, 0), 48, 0x4000, 'aa:bb:cc:00:00:01', macFor('10.0.0.30'))); ev(ts + 0.03, ipFrame('10.0.0.30', ext, 6, tcp(4444, s, 0x12, 1, seq + 1))); for (let i = 0; i < 6; i++) { ev(ts + 0.1 + i * 0.5, ipFrame(ext, '10.0.0.30', 6, tcp(s, 4444, 0x18, seq + i * 50, 2, str('whoami\r\n')), 48, 0x4000, 'aa:bb:cc:00:00:01', macFor('10.0.0.30'))); ev(ts + 0.2 + i * 0.5, ipFrame('10.0.0.30', ext, 6, tcp(4444, s, 0x18, 2, seq + i * 50 + 7, str('nt authority\\system\r\n')))); } }
+
+    events.sort((a, b) => a[0] - b[0]);
+    for (const [ts, f] of events) rec(ts, f);
+    const outBuf = new Uint8Array(total); let o = 0; for (const c of chunks) { outBuf.set(c, o); o += c.length; }
+    return outBuf;
+  }
+
+  // ---------------------------------------------------------------- IR report engine
+  // Correlates the findings into an incident narrative: maps each finding to an attack phase,
+  // groups them by the internal asset involved, and orders everything in time so an analyst gets
+  // an executive summary, a probable root-cause chain, a timeline and a per-host breakdown.
+  const PHASE = {
+    'IOC match': { order: 0, label: 'Threat-intel match' },
+    'Reconnaissance': { order: 1, label: 'Reconnaissance' },
+    'Evasion': { order: 2, label: 'Defense evasion' },
+    'Credential attack': { order: 3, label: 'Credential access' },
+    'Cleartext credentials': { order: 3, label: 'Credential exposure' },
+    'Suspicious connection': { order: 4, label: 'Command & control' },
+    'Command and control': { order: 4, label: 'Command & control' },
+    'Covert channel': { order: 4, label: 'Command & control (covert)' },
+    'Infrastructure': { order: 4, label: 'C2 infrastructure' },
+    'Lateral movement': { order: 5, label: 'Lateral movement' },
+    'Data exfiltration': { order: 6, label: 'Exfiltration' },
+    'Denial of service': { order: 7, label: 'Impact' },
+    'Spoofing': { order: 8, label: 'Collection / man-in-the-middle' },
+    'Traffic anomaly': { order: 9, label: 'Supporting observation' },
+    'Network health': { order: 9, label: 'Network health' },
+    'Integrity': { order: 10, label: 'Capture quality' },
+    'Policy': { order: 9, label: 'Policy / hygiene' },
+  };
+  const phaseOf = cat => (PHASE[cat] || { order: 9, label: cat }).label;
+  const SEV_RANK = { high: 0, medium: 1, low: 2, info: 3 };
+
+  // MITRE ATT&CK mapping. Base technique per category, refined by title keywords where a category
+  // spans several techniques. IDs are Enterprise ATT&CK.
+  const ATT = {
+    'Reconnaissance': { ta: 'TA0007', tactic: 'Discovery', id: 'T1046', name: 'Network Service Discovery' },
+    'Denial of service': { ta: 'TA0040', tactic: 'Impact', id: 'T1498', name: 'Network Denial of Service' },
+    'Spoofing': { ta: 'TA0006', tactic: 'Credential Access', id: 'T1557.002', name: 'Adversary-in-the-Middle: ARP Cache Poisoning' },
+    'Covert channel': { ta: 'TA0011', tactic: 'Command and Control', id: 'T1071.004', name: 'Application Layer Protocol: DNS' },
+    'Command and control': { ta: 'TA0011', tactic: 'Command and Control', id: 'T1071', name: 'Application Layer Protocol' },
+    'Malware delivery': { ta: 'TA0011', tactic: 'Command and Control', id: 'T1105', name: 'Ingress Tool Transfer' },
+    'Lateral movement': { ta: 'TA0008', tactic: 'Lateral Movement', id: 'T1021.002', name: 'Remote Services: SMB/Windows Admin Shares' },
+    'Credential access': { ta: 'TA0006', tactic: 'Credential Access', id: 'T1110', name: 'Brute Force' },
+    'Credential attack': { ta: 'TA0006', tactic: 'Credential Access', id: 'T1110', name: 'Brute Force' },
+    'Cleartext credentials': { ta: 'TA0006', tactic: 'Credential Access', id: 'T1040', name: 'Network Sniffing' },
+    'Suspicious TLS': { ta: 'TA0011', tactic: 'Command and Control', id: 'T1573', name: 'Encrypted Channel' },
+    'Suspicious connection': { ta: 'TA0011', tactic: 'Command and Control', id: 'T1571', name: 'Non-Standard Port' },
+    'Data exfiltration': { ta: 'TA0010', tactic: 'Exfiltration', id: 'T1048', name: 'Exfiltration Over Alternative Protocol' },
+    'Infrastructure': { ta: 'TA0011', tactic: 'Command and Control', id: 'T1568', name: 'Dynamic Resolution' },
+    'Evasion': { ta: 'TA0005', tactic: 'Defense Evasion', id: 'T1090', name: 'Proxy' },
+    'Traffic anomaly': null, 'Integrity': null, 'Policy': null,
+  };
+  function attackFor(cat, title) {
+    const t = (title || '').toLowerCase();
+    if (cat === 'Reconnaissance') { if (t.includes('ping sweep')) return { ta: 'TA0007', tactic: 'Discovery', id: 'T1018', name: 'Remote System Discovery' }; if (t.includes('flag')) return { ta: 'TA0007', tactic: 'Discovery', id: 'T1046', name: 'Network Service Discovery' }; }
+    if (cat === 'Covert channel') { if (t.includes('icmp')) return { ta: 'TA0011', tactic: 'Command and Control', id: 'T1095', name: 'Non-Application Layer Protocol' }; if (t.includes('doh') || t.includes('dns-over')) return { ta: 'TA0011', tactic: 'Command and Control', id: 'T1572', name: 'Protocol Tunneling' }; }
+    if (cat === 'Command and control') { if (t.includes('nxdomain') || t.includes('dga')) return { ta: 'TA0011', tactic: 'Command and Control', id: 'T1568.002', name: 'Dynamic Resolution: DGA' }; if (t.includes('inbound') || t.includes('reverse')) return { ta: 'TA0011', tactic: 'Command and Control', id: 'T1571', name: 'Non-Standard Port' }; if (t.includes('ja3') || t.includes('fingerprint')) return { ta: 'TA0011', tactic: 'Command and Control', id: 'T1071', name: 'Application Layer Protocol' }; if (t.includes('beacon')) return { ta: 'TA0011', tactic: 'Command and Control', id: 'T1071', name: 'Application Layer Protocol' }; }
+    if (cat === 'Credential access') { if (t.includes('kerberoast')) return { ta: 'TA0006', tactic: 'Credential Access', id: 'T1558.003', name: 'Kerberoasting' }; if (t.includes('as-req') || t.includes('as-rep')) return { ta: 'TA0006', tactic: 'Credential Access', id: 'T1558.004', name: 'AS-REP Roasting' }; if (t.includes('ntlm')) return { ta: 'TA0006', tactic: 'Credential Access', id: 'T1557.001', name: 'AiTM: LLMNR/NBT-NS Poisoning and SMB Relay' }; }
+    if (cat === 'Lateral movement') { if (t.includes('svcctl') || t.includes('service')) return { ta: 'TA0002', tactic: 'Execution', id: 'T1569.002', name: 'System Services: Service Execution' }; }
+    if (cat === 'Infrastructure') { if (t.includes('fast-flux') || t.includes('short ttl') || t.includes('different addresses')) return { ta: 'TA0011', tactic: 'Command and Control', id: 'T1568.001', name: 'Dynamic Resolution: Fast Flux DNS' }; if (t.includes('look-alike') || t.includes('punycode') || t.includes('homoglyph')) return { ta: 'TA0042', tactic: 'Resource Development', id: 'T1583.001', name: 'Acquire Infrastructure: Domains' }; }
+    if (cat === 'Evasion') { if (t.includes('fragment')) return { ta: 'TA0005', tactic: 'Defense Evasion', id: 'T1205', name: 'Traffic Signaling' }; if (t.includes('port')) return { ta: 'TA0011', tactic: 'Command and Control', id: 'T1571', name: 'Non-Standard Port' }; }
+    if (cat === 'Data exfiltration') { if (t.includes('dns')) return { ta: 'TA0010', tactic: 'Exfiltration', id: 'T1048.003', name: 'Exfiltration Over Unencrypted Non-C2 Protocol' }; }
+    return ATT[cat] || null;
+  }
+
+  const RECS = {
+    'Reconnaissance': 'Confirm whether the scanning host is authorised; if not, isolate it and review which services answered.',
+    'Command and control': 'Block the C2 destinations at the perimeter, hunt for the owning process on the affected hosts, and check endpoints against your EDR.',
+    'Covert channel': 'Block the implicated domains/hosts at the resolver and firewall, and inspect the affected hosts for tunnelling tools.',
+    'Data exfiltration': 'Determine what data left the network, preserve the host for forensics, and confirm whether the destination is sanctioned.',
+    'Credential attack': 'Review authentication logs on the targeted services, lock or rate-limit the source, and reset any accounts that were guessed.',
+    'Cleartext credentials': 'Rotate every credential sent in the clear and move the affected service to an encrypted transport.',
+    'Lateral movement': 'Verify the pivoting host is a legitimate admin system; otherwise treat it as compromised and scope the blast radius.',
+    'Spoofing': 'Locate the offending MAC/host on the switch, disconnect it, and enable DAI / RA-Guard to prevent recurrence.',
+    'Denial of service': 'Rate-limit or filter the attack traffic upstream and enable SYN-cookie protection on the target.',
+    'Infrastructure': 'Validate the flagged resolution behaviour against your own DNS before acting.',
+    'Evasion': 'Treat non-standard ports and fragmentation as suspicious until the owning service is identified.',
+  };
+
+  function fmtClock(ts) { const d = new Date(ts * 1000); return isNaN(d) ? '—' : d.toISOString().replace('T', ' ').replace('.000Z', 'Z').replace('Z', ' UTC'); }
+  function fmtOffset(s) { s = Math.max(0, s); if (s < 120) return '+' + s.toFixed(1) + 's'; if (s < 7200) return '+' + (s / 60).toFixed(1) + 'm'; return '+' + (s / 3600).toFixed(2) + 'h'; }
+  function durText(s) { if (s < 120) return s.toFixed(0) + ' s'; if (s < 7200) return (s / 60).toFixed(1) + ' min'; return (s / 3600).toFixed(2) + ' h'; }
+
+  function buildReport(result, meta) {
+    meta = meta || {};
+    const s = result.summary, start = s.start;
+    const findings = result.findings;
+    const sevc = result.severity;
+    const actionable = findings.filter(f => f.severity !== 'info');
+    const timeline = [...actionable].sort((a, b) => (a.firstTs - b.firstTs) || SEV_RANK[a.severity] - SEV_RANK[b.severity]);
+
+    // affected internal assets: any private host named by an actionable finding
+    const assets = new Map();
+    for (const f of findings) {
+      if (f.severity === 'info') continue;
+      for (const h of f.hosts) {
+        if (!isPrivate(h)) continue;
+        let a = assets.get(h); if (!a) { a = { ip: h, findings: [], worst: 'info', first: Infinity, phases: new Set() }; assets.set(h, a); }
+        a.findings.push(f); if (SEV_RANK[f.severity] < SEV_RANK[a.worst]) a.worst = f.severity; if (f.firstTs < a.first) a.first = f.firstTs; a.phases.add(phaseOf(f.category));
+      }
+    }
+    const assetList = [...assets.values()].sort((a, b) => SEV_RANK[a.worst] - SEV_RANK[b.worst] || a.first - b.first)
+      .map(a => ({ ip: a.ip, worst: a.worst, first: a.first, phases: [...a.phases], findings: a.findings.sort((x, y) => x.firstTs - y.firstTs).map(f => f.id) }));
+
+    // probable attack narrative: the most-affected host, its findings told in phase/time order
+    let narrative = [];
+    const chainHost = [...assets.values()].sort((a, b) => (SEV_RANK[a.worst] - SEV_RANK[b.worst]) || (b.findings.length - a.findings.length) || (a.first - b.first))[0];
+    if (chainHost) {
+      const ordered = [...chainHost.findings].sort((a, b) => (a.firstTs - b.firstTs) || ((PHASE[a.category] || {}).order || 9) - ((PHASE[b.category] || {}).order || 9));
+      for (const f of ordered) narrative.push({ phase: phaseOf(f.category), at: fmtOffset(f.firstTs - start), id: f.id, title: f.title, severity: f.severity });
+    }
+
+    // headline risk
+    const topCats = new Set(actionable.filter(f => f.severity === 'high').map(f => f.category));
+    let posture = 'clean';
+    if (sevc.high) posture = (topCats.has('Data exfiltration') || topCats.has('Command and control') || topCats.has('Covert channel')) ? 'active-compromise' : 'high-risk';
+    else if (sevc.medium) posture = 'suspicious';
+    else if (sevc.low) posture = 'low-risk';
+    const postureText = {
+      'active-compromise': 'Evidence consistent with an active compromise was found: one or more internal hosts show command-and-control or data-exfiltration behaviour.',
+      'high-risk': 'High-severity activity was found that requires immediate investigation.',
+      'suspicious': 'No high-severity compromise indicators were found, but suspicious activity warrants review.',
+      'low-risk': 'Only low-severity or hygiene issues were found.',
+      'clean': 'No anomalies were detected at the configured sensitivity. Absence of evidence is not proof of safety — detection is limited to what the capture contains.',
+    }[posture];
+
+    // recommendations, de-duplicated by category and ranked by the worst severity seen in that category
+    const catWorst = new Map();
+    for (const f of actionable) { const c = f.category; if (!catWorst.has(c) || SEV_RANK[f.severity] < SEV_RANK[catWorst.get(c)]) catWorst.set(c, f.severity); }
+    const recommendations = [...catWorst.entries()].filter(([c]) => RECS[c]).sort((a, b) => SEV_RANK[a[1]] - SEV_RANK[b[1]]).map(([c, sev]) => ({ severity: sev, phase: phaseOf(c), text: RECS[c] }));
+
+    const c2 = result.iocs.ips.filter(x => x.findings.length).map(x => x.ip);
+    const exec = {
+      posture, postureText,
+      headline: sevc.high ? (sevc.high + ' high-severity finding' + (sevc.high === 1 ? '' : 's') + ' across ' + assetList.length + ' internal host' + (assetList.length === 1 ? '' : 's')) : (actionable.length + ' finding' + (actionable.length === 1 ? '' : 's') + ' to review'),
+      counts: sevc,
+      affectedAssets: assetList.length,
+      c2Endpoints: c2,
+      window: { start: s.start, end: s.end, duration: s.duration },
+    };
+
+    return {
+      generated: new Date().toISOString(),
+      title: meta.title || 'Network Traffic Incident Analysis',
+      analyst: meta.analyst || null,
+      evidence: { tool: 'FluxHunt ' + (meta.toolVersion || ''), config: meta.config || null, sources: (meta.sources || []).map(s => ({ name: s.name, packets: s.packets, bytes: s.bytes, sha256: s.sha256 || null })) },
+      sources: meta.sources || [{ name: meta.name || 'capture', packets: s.packets, bytes: s.bytes }],
+      scope: { packets: s.packets, bytes: s.bytes, hosts: s.hosts, internalHosts: s.internalHosts, externalHosts: s.externalHosts, sessions: result.sessions.length, start: s.start, end: s.end, duration: s.duration },
+      exec, narrative, timeline: timeline.map(f => ({ id: f.id, at: fmtOffset(f.firstTs - start), clock: fmtClock(f.firstTs), phase: phaseOf(f.category), severity: f.severity, category: f.category, title: f.title, hosts: f.hosts, attack: f.attack || null })),
+      assets: assetList, recommendations,
+      attackCoverage: (() => { const m = new Map(); for (const f of actionable) { if (!f.attack) continue; let g = m.get(f.attack.ta); if (!g) { g = { ta: f.attack.ta, tactic: f.attack.tactic, techs: new Map() }; m.set(f.attack.ta, g); } if (!g.techs.has(f.attack.id)) g.techs.set(f.attack.id, { id: f.attack.id, name: f.attack.name, fids: [] }); g.techs.get(f.attack.id).fids.push(f.id); } const TACTIC_ORDER = ['TA0043', 'TA0042', 'TA0001', 'TA0002', 'TA0005', 'TA0006', 'TA0007', 'TA0008', 'TA0011', 'TA0010', 'TA0040']; return [...m.values()].map(g => ({ ta: g.ta, tactic: g.tactic, techniques: [...g.techs.values()] })).sort((a, b) => TACTIC_ORDER.indexOf(a.ta) - TACTIC_ORDER.indexOf(b.ta)); })(),
+      findings: findings.map(f => ({ id: f.id, severity: f.severity, category: f.category, phase: phaseOf(f.category), title: f.title, summary: f.summary, evidence: f.evidence, advice: f.advice, hosts: f.hosts, firstSeen: fmtClock(f.firstTs), at: fmtOffset(f.firstTs - start), packets: f.packets.length, attack: f.attack || null })),
+      iocs: result.iocs,
+      caveats: [
+        'This report is generated from packet capture alone. It observes network behaviour, not endpoint state; correlate with host logs, EDR and authentication records before concluding.',
+        'Findings are heuristic. Legitimate software (telemetry, update pollers, SaaS keep-alives, CDNs, backups) can resemble beaconing, exfiltration or fast-flux. Each finding should be validated against known-good baselines.',
+        'Internal/external classification uses RFC1918 and related private ranges. NAT, VPNs and cloud deployments may shift which side of a conversation is "internal".',
+        'MITRE ATT&CK IDs are a best-effort mapping from each detector to the most representative technique; a single observation can relate to several techniques, and the mapping is guidance, not attribution.',
+        'IP enrichment (region and network owner) is offline and approximate: region is the responsible RIR from IANA /8 allocations, and owner is matched against a small built-in list of well-known ranges. It is not live geolocation or ASN lookup — verify anything that matters against an authoritative WHOIS/geo service.',
+        meta.sources && meta.sources.length > 1 ? 'Multiple captures were merged by absolute timestamp. If the source clocks were not synchronised, the relative ordering of events across files may be imprecise.' : null,
+      ].filter(Boolean),
+    };
+  }
+
+  function reportMarkdown(r) {
+    const L = [];
+    const sev = s => s.toUpperCase();
+    L.push('# ' + r.title); L.push('');
+    if (r.analyst && (r.analyst.tlp || r.analyst.name || r.analyst.org || r.analyst.case)) { const a = r.analyst; if (a.tlp) L.push('**' + a.tlp + '**  '); L.push([a.name && 'Analyst: ' + a.name, a.org, a.case && 'Case: ' + a.case].filter(Boolean).join(' · ')); L.push(''); }
+    L.push('_Generated ' + r.generated + ' by FluxHunt._'); L.push('');
+    L.push('## 1. Executive summary'); L.push('');
+    L.push('**Assessment:** ' + r.exec.postureText); L.push('');
+    L.push('- **Headline:** ' + r.exec.headline);
+    L.push('- **Findings:** ' + ['high', 'medium', 'low', 'info'].filter(k => r.exec.counts[k]).map(k => r.exec.counts[k] + ' ' + k).join(', ') || 'none');
+    L.push('- **Affected internal hosts:** ' + r.exec.affectedAssets);
+    if (r.exec.c2Endpoints.length) L.push('- **External endpoints tied to findings:** ' + r.exec.c2Endpoints.slice(0, 12).join(', ') + (r.exec.c2Endpoints.length > 12 ? ' …' : ''));
+    L.push('- **Capture window:** ' + fmtClock(r.scope.start) + ' → ' + fmtClock(r.scope.end) + ' (' + durText(r.scope.duration) + ')');
+    L.push('- **Scope:** ' + r.scope.packets.toLocaleString() + ' packets, ' + fmtBytes(r.scope.bytes) + ', ' + r.scope.hosts + ' hosts, ' + r.scope.sessions.toLocaleString() + ' sessions across ' + r.sources.length + ' capture file(s)'); L.push('');
+    if (r.recommendations.length) { L.push('**Immediate recommended actions:**'); L.push(''); r.recommendations.forEach((x, i) => L.push((i + 1) + '. _(' + sev(x.severity) + ', ' + x.phase + ')_ ' + x.text)); L.push(''); }
+    if (r.narrative.length) {
+      L.push('## 2. Probable attack narrative'); L.push('');
+      L.push('Reconstructed for the most-affected host, in observed order (heuristic — validate against host evidence):'); L.push('');
+      r.narrative.forEach(nn => L.push('- **' + nn.at + ' · ' + nn.phase + '** (' + sev(nn.severity) + ') — ' + nn.title + ' [#' + nn.id + ']'));
+      L.push('');
+    }
+    L.push('## 3. Incident timeline'); L.push('');
+    L.push('| Time | Phase | Severity | Finding | Hosts |'); L.push('|---|---|---|---|---|');
+    for (const t of r.timeline) L.push('| ' + t.at + ' | ' + t.phase + ' | ' + sev(t.severity) + ' | ' + t.title.replace(/\|/g, '\\|') + ' | ' + t.hosts.slice(0, 3).join(', ') + ' |');
+    if (!r.timeline.length) L.push('| — | — | — | No actionable findings | — |');
+    L.push('');
+    L.push('## 4. Affected assets'); L.push('');
+    if (r.assets.length) { L.push('| Host | Worst | First seen | Phases | Findings |'); L.push('|---|---|---|---|---|'); for (const a of r.assets) L.push('| ' + a.ip + ' | ' + sev(a.worst) + ' | ' + fmtOffset(a.first - r.scope.start) + ' | ' + a.phases.join(', ') + ' | ' + a.findings.map(id => '#' + id).join(' ') + ' |'); }
+    else L.push('No internal hosts were implicated by actionable findings.');
+    L.push('');
+    if (r.attackCoverage && r.attackCoverage.length) {
+      L.push('## 5. MITRE ATT&CK coverage'); L.push('');
+      L.push('| Tactic | Techniques observed |'); L.push('|---|---|');
+      for (const g of r.attackCoverage) L.push('| ' + g.tactic + ' (' + g.ta + ') | ' + g.techniques.map(t => t.id + ' ' + t.name + ' [' + t.fids.map(x => '#' + x).join(' ') + ']').join('; ') + ' |');
+      L.push('');
+    }
+    L.push('## 6. Technical findings'); L.push('');
+    for (const f of r.findings) {
+      L.push('### #' + f.id + ' — ' + f.title + '  _(' + sev(f.severity) + ' · ' + f.phase + (f.attack ? ' · ATT&CK ' + f.attack.id : '') + ')_'); L.push('');
+      L.push('First seen ' + f.firstSeen + ' (' + f.at + '). ' + f.summary); L.push('');
+      if (f.attack) L.push('- **ATT&CK:** ' + f.attack.id + ' ' + f.attack.name + ' (' + f.attack.tactic + ')');
+      for (const e of f.evidence) L.push('- **' + e[0] + ':** ' + e[1]);
+      L.push(''); L.push('_Recommended action:_ ' + f.advice); L.push('');
+    }
+    if (!r.findings.length) { L.push('No findings.'); L.push(''); }
+    L.push('## 7. Indicators of compromise'); L.push('');
+    L.push('### External IP addresses'); L.push('');
+    L.push('| IP | Resolved from | Bytes out | Bytes in | Findings |'); L.push('|---|---|---|---|---|');
+    for (const x of r.iocs.ips.slice(0, 50)) L.push('| ' + x.ip + ' | ' + (x.names.join(', ') || (x.resolved ? '' : 'direct-IP')) + ' | ' + fmtBytes(x.bytesOut) + ' | ' + fmtBytes(x.bytesIn) + ' | ' + (x.findings.map(id => '#' + id).join(' ')) + ' |');
+    L.push('');
+    if (r.iocs.domains.length) { L.push('### Domains'); L.push(''); L.push('| Domain | Queries | Clients | Resolved IPs | Flagged |'); L.push('|---|---|---|---|---|'); for (const d of r.iocs.domains.slice(0, 50)) L.push('| ' + d.domain + ' | ' + d.queries + ' | ' + d.clients + ' | ' + (d.ips.join(', ') || '') + ' | ' + (d.flagged ? 'yes' : '') + ' |'); L.push(''); }
+    L.push('## 8. Methodology & caveats'); L.push('');
+    for (const c of r.caveats) L.push('- ' + c);
+    L.push('');
+    if (r.evidence) { L.push('## 9. Evidence & chain of custody'); L.push(''); L.push('- **Tool:** ' + r.evidence.tool); L.push('- **Generated:** ' + r.generated); L.push(''); L.push('| Source file | Packets | Size | SHA-256 |'); L.push('|---|---|---|---|'); for (const s of r.evidence.sources) L.push('| ' + s.name + ' | ' + s.packets + ' | ' + fmtBytes(s.bytes) + ' | ' + (s.sha256 || '—') + ' |'); L.push(''); }
+    return L.join('\n');
+  }
+
+  // ---------------------------------------------------------------- IoC / detection-rule export
+  function gatherIndicators(result) {
+    const ind = { ips: [], domains: [], hashes: [], certs: [], ja3: [], names: [] };
+    const BENIGN_CAT = new Set(['Traffic anomaly', 'Integrity', 'Policy']);
+    const fById = new Map(); for (const f of result.findings) fById.set(f.id, f);
+    for (const x of result.iocs.ips) {
+      const qualifying = x.findings.filter(id => { const f = fById.get(id); return f && (f.severity === 'high' || f.severity === 'medium') && !BENIGN_CAT.has(f.category); });
+      if (!qualifying.length) continue; // only export external IPs tied to a real offensive finding
+      ind.ips.push({ value: x.ip, context: x.names.join(', ') || (x.resolved ? 'external' : 'direct-IP (no DNS)'), findings: qualifying, malicious: true });
+    }
+    for (const d of result.iocs.domains) if (d.flagged) ind.domains.push({ value: d.domain, context: 'queried ' + d.queries + '×', malicious: true });
+    const a = result.artifacts || { files: [], certs: [], ja3: [] };
+    for (const f of a.files) if (f.dangerous) ind.hashes.push({ value: f.sha256, algo: 'SHA-256', context: f.type + ' from ' + (f.host || f.dst) + (f.path || ''), malicious: true });
+    for (const c of a.certs) if (c.selfSigned) ind.certs.push({ value: c.sha1, context: 'self-signed cert ' + (c.subject || '') + ' on ' + (c.sni || c.dst) });
+    for (const j of (a.ja3 || [])) if (j.known) ind.ja3.push({ value: j.ja3, context: j.known, src: j.src });
+    return ind;
+  }
+  function exportIoCs(result, format, meta) {
+    meta = meta || {}; const ind = gatherIndicators(result); const now = new Date().toISOString();
+    if (format === 'defang') {
+      const L = ['Indicators of Compromise — ' + (meta.name || 'capture'), 'Generated ' + now + ' by FluxHunt', '(indicators are defanged for safe handling)', ''];
+      if (ind.ips.length) { L.push('## IP addresses'); for (const x of ind.ips) L.push(defang(x.value) + (x.malicious ? '  [in findings]' : '') + (x.context ? '  — ' + x.context : '')); L.push(''); }
+      if (ind.domains.length) { L.push('## Domains'); for (const d of ind.domains) L.push(defang(d.value) + '  — ' + d.context); L.push(''); }
+      if (ind.hashes.length) { L.push('## File hashes (SHA-256)'); for (const h of ind.hashes) L.push(h.value + '  — ' + h.context); L.push(''); }
+      if (ind.certs.length) { L.push('## TLS certificates (SHA-1)'); for (const c of ind.certs) L.push(c.value + '  — ' + c.context); L.push(''); }
+      if (ind.ja3.length) { L.push('## TLS client fingerprints (JA3)'); for (const j of ind.ja3) L.push(j.value + '  — ' + j.context + ' (host ' + defang(j.src) + ')'); L.push(''); }
+      return L.join('\n');
+    }
+    if (format === 'csv') {
+      const rows = [['type', 'value', 'context', 'malicious']];
+      for (const x of ind.ips) rows.push(['ipv4', x.value, x.context, x.malicious ? 'yes' : '']);
+      for (const d of ind.domains) rows.push(['domain', d.value, d.context, 'yes']);
+      for (const h of ind.hashes) rows.push(['sha256', h.value, h.context, 'yes']);
+      for (const c of ind.certs) rows.push(['x509-sha1', c.value, c.context, '']);
+      for (const j of ind.ja3) rows.push(['ja3', j.value, j.context, 'yes']);
+      const q = v => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+      return rows.map(r => r.map(q).join(',')).join('\n');
+    }
+    if (format === 'stix') {
+      const objs = [{ type: 'identity', spec_version: '2.1', id: 'identity--a1b2c3d4-0000-4000-8000-000000000001', created: now, modified: now, name: 'FluxHunt', identity_class: 'system' }];
+      const mk = (pattern, name, labels) => ({ type: 'indicator', spec_version: '2.1', id: 'indicator--' + uuid(), created: now, modified: now, name, pattern_type: 'stix', pattern, valid_from: now, labels: labels || ['malicious-activity'], created_by_ref: objs[0].id });
+      for (const x of ind.ips) if (x.malicious) objs.push(mk("[ipv4-addr:value = '" + x.value + "']", 'C2/suspicious IP ' + x.value, ['command-and-control']));
+      for (const d of ind.domains) objs.push(mk("[domain-name:value = '" + d.value + "']", 'Suspicious domain ' + d.value));
+      for (const h of ind.hashes) objs.push(mk("[file:hashes.'SHA-256' = '" + h.value + "']", h.context, ['malicious-activity']));
+      for (const c of ind.certs) objs.push(mk("[x509-certificate:hashes.'SHA-1' = '" + c.value + "']", 'Self-signed cert ' + c.value));
+      return JSON.stringify({ type: 'bundle', id: 'bundle--' + uuid(), objects: objs }, null, 2);
+    }
+    if (format === 'misp') {
+      const attrs = []; const push = (type, value, cat, comment) => attrs.push({ type, category: cat, to_ids: true, value, comment });
+      for (const x of ind.ips) if (x.malicious) push('ip-dst', x.value, 'Network activity', x.context);
+      for (const d of ind.domains) push('domain', d.value, 'Network activity', d.context);
+      for (const h of ind.hashes) push('sha256', h.value, 'Payload delivery', h.context);
+      for (const c of ind.certs) push('x509-fingerprint-sha1', c.value, 'Network activity', c.context);
+      for (const j of ind.ja3) push('ja3-fingerprint-md5', j.value, 'Network activity', j.context);
+      return JSON.stringify({ Event: { info: 'FluxHunt — ' + (meta.name || 'capture'), date: now.slice(0, 10), threat_level_id: result.severity.high ? '1' : '3', analysis: '1', Attribute: attrs } }, null, 2);
+    }
+    if (format === 'suricata') {
+      let sid = 9000000; const L = ['# Suricata/Snort rules generated by FluxHunt ' + now, '# Review and tune before deploying; SIDs are in the local range.', ''];
+      for (const x of ind.ips) if (x.malicious) L.push('alert ip $HOME_NET any -> ' + x.value + ' any (msg:"FluxHunt - traffic to suspicious host ' + x.value + '"; threshold:type limit,track by_src,count 1,seconds 3600; sid:' + (sid++) + '; rev:1;)');
+      for (const d of ind.domains) L.push('alert dns $HOME_NET any -> any any (msg:"FluxHunt - lookup of suspicious domain ' + d.value + '"; dns.query; content:"' + d.value + '"; nocase; sid:' + (sid++) + '; rev:1;)');
+      for (const h of ind.hashes) L.push('# SHA-256 ' + h.value + ' (' + h.context + ') — match in your file-hash dataset / EDR');
+      return L.join('\n');
+    }
+    if (format === 'navigator') {
+      const techs = new Map();
+      for (const f of result.findings) { if (!f.attack) continue; const t = techs.get(f.attack.id) || { techniqueID: f.attack.id, score: 0, comment: [] }; t.score++; t.comment.push('#' + f.id + ' ' + f.title); techs.set(f.attack.id, t); }
+      return JSON.stringify({ name: 'FluxHunt — ' + (meta.name || 'capture'), versions: { attack: '14', navigator: '4.9.1', layer: '4.5' }, domain: 'enterprise-attack', description: 'Techniques observed in packet capture analysis', techniques: [...techs.values()].map(t => ({ techniqueID: t.techniqueID, score: t.score, color: '', comment: t.comment.join('; '), enabled: true })), gradient: { colors: ['#ffe8e8', '#b42828'], minValue: 0, maxValue: Math.max(1, ...[...techs.values()].map(t => t.score)) }, legendItems: [] }, null, 2);
+    }
+    if (format === 'zeek') {
+      const L = []; const sess = result.sessions || [];
+      L.push('#separator \\x09'); L.push('#path\tconn'); L.push('#fields\tts\tid.orig_h\tid.orig_p\tid.resp_h\tid.resp_p\tproto\tservice\tduration\torig_bytes\tresp_bytes');
+      for (const s of sess.slice(0, 50000)) L.push([s.start.toFixed(6), s.src, s.sport, s.dst, s.dport, s.proto, (s.app || '-').toLowerCase(), s.dur.toFixed(6), s.cBytes, s.sBytes].join('\t'));
+      L.push(''); L.push('#path\tssl'); L.push('#fields\tserver_name\tsubject\tissuer\tself_signed\tvalidation_status');
+      for (const c of (result.artifacts.certs || [])) L.push([c.sni || '-', c.subject || '-', c.issuer || '-', c.selfSigned ? 'T' : 'F', c.selfSigned ? 'self-signed' : 'ok'].join('\t'));
+      for (const nm of (result.iocs.names || [])) if (!(result.artifacts.certs || []).some(c => c.sni === nm.name)) L.push([nm.name, '-', '-', '-', '-'].join('\t'));
+      L.push(''); L.push('#path\tfiles'); L.push('#fields\tsha256\tmime_type\ttotal_bytes\ttx_host\trx_host\tsource');
+      for (const f of (result.artifacts.files || [])) L.push([f.sha256, f.type || '-', f.bytes, f.dst, f.src, (f.host || '-') + (f.path || '')].join('\t'));
+      L.push(''); L.push('# http and dns per-event logs require per-request logging (not retained in this build); conn/ssl/files are complete.');
+      return L.join('\n');
+    }
+    if (format === 'openioc') {
+      const item = (ctx, search, val) => `    <IndicatorItem condition="is"><Context document="${ctx}" search="${search}" type="mir"/><Content type="string">${val}</Content></IndicatorItem>`;
+      const items = [];
+      for (const x of ind.ips) if (x.malicious) items.push(item('Network', 'Network/DNS', x.value));
+      for (const d of ind.domains) items.push(item('Network', 'Network/DNS', d.value));
+      for (const h of ind.hashes) items.push(item('FileItem', 'FileItem/Sha256sum', h.value));
+      return `<?xml version="1.0" encoding="us-ascii"?>\n<ioc xmlns="http://schemas.mandiant.com/2010/ioc" id="${uuid()}">\n  <short_description>FluxHunt — ${meta.name || 'capture'}</short_description>\n  <authored_date>${now}</authored_date>\n  <definition>\n   <Indicator operator="OR" id="${uuid()}">\n${items.join('\n')}\n   </Indicator>\n  </definition>\n</ioc>`;
+    }
+    if (format === 'cef') {
+      const L = ['# ArcSight CEF events — one per finding'];
+      const sevMap = { high: 9, medium: 6, low: 3, info: 1 };
+      for (const f of result.findings) { const ext = ['dvc=fluxhunt', f.hosts[0] ? 'src=' + f.hosts[0] : '', f.hosts[1] ? 'dst=' + f.hosts[1] : '', f.attack ? 'cs1Label=MitreTechnique cs1=' + f.attack.id : '', 'cat=' + f.category.replace(/\s/g, '_')].filter(Boolean).join(' '); L.push('CEF:0|FluxHunt|FluxHunt|' + '2.1' + '|' + (f.attack ? f.attack.id : f.category.replace(/\s/g, '_')) + '|' + f.title.replace(/[|\\]/g, ' ') + '|' + (sevMap[f.severity] || 1) + '|' + ext); }
+      return L.join('\n');
+    }
+    if (format === 'sigma') {
+      const ips = ind.ips.filter(x => x.malicious).map(x => x.value), doms = ind.domains.map(d => d.value);
+      return '# Sigma rule (network) generated by FluxHunt — review before use\n' +
+        'title: FluxHunt suspicious network indicators\n' +
+        'status: experimental\n' +
+        'description: Connections to indicators extracted from packet capture ' + (meta.name || '') + '\n' +
+        'logsource:\n    category: firewall\n' +
+        'detection:\n' +
+        (ips.length ? '    dst_ips:\n        dst_ip:\n' + ips.slice(0, 100).map(i => '            - ' + i).join('\n') + '\n' : '') +
+        (doms.length ? '    dst_domains:\n        dst_domain:\n' + doms.slice(0, 100).map(d => '            - ' + d).join('\n') + '\n' : '') +
+        '    condition: ' + [ips.length ? 'dst_ips' : '', doms.length ? 'dst_domains' : ''].filter(Boolean).join(' or ') + '\n' +
+        'level: high\n' +
+        'tags:\n' + [...new Set(result.findings.filter(f => f.attack).map(f => '    - attack.' + f.attack.id.toLowerCase()))].join('\n') + '\n';
+    }
+    if (format === 'yara') {
+      const strings = []; let i = 0;
+      for (const d of ind.domains) strings.push('        $d' + (i++) + ' = "' + d.value + '" ascii wide nocase');
+      for (const j of ind.ja3) strings.push('        // JA3 ' + j.value + ' — ' + j.context);
+      for (const h of ind.hashes) strings.push('        // SHA-256 ' + h.value + ' — ' + h.context);
+      return 'import "hash"\n\nrule FluxHunt_Indicators\n{\n    meta:\n        description = "Network indicators extracted by FluxHunt"\n        generated = "' + now + '"\n    strings:\n' + (strings.filter(s => s.startsWith('        $')).join('\n') || '        $placeholder = "no string indicators"') + '\n    condition:\n        any of them' + (ind.hashes.length ? '\n        // or, for the carved files:\n        // ' + ind.hashes.map(h => 'hash.sha256(0, filesize) == "' + h.value + '"').join(' or\n        // ') : '') + '\n}\n';
+    }
+    return '';
+  }
+  function uuid() { const h = '0123456789abcdef'; let s = ''; for (let i = 0; i < 36; i++) { if (i === 8 || i === 13 || i === 18 || i === 23) s += '-'; else if (i === 14) s += '4'; else if (i === 19) s += h[(Math.random() * 4 | 0) + 8]; else s += h[Math.random() * 16 | 0]; } return s; }
+
+  // ---- minimal ZIP writer (store method, for the case-package export)
+  const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; } return t; })();
+  function crc32(bytes) { let c = 0xffffffff; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+  function makeZip(files) {
+    const enc = s => typeof s === 'string' ? new TextEncoder().encode(s) : s;
+    const parts = [], central = []; let offset = 0;
+    const w16 = v => [v & 255, (v >> 8) & 255], w32 = v => [v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >>> 24) & 255];
+    for (const f of files) {
+      const data = enc(f.data), name = new TextEncoder().encode(f.name), crc = crc32(data);
+      const lh = [0x50, 0x4b, 0x03, 0x04, ...w16(20), ...w16(0), ...w16(0), ...w16(0), ...w16(0), ...w32(crc), ...w32(data.length), ...w32(data.length), ...w16(name.length), ...w16(0)];
+      const lhb = new Uint8Array(lh.length + name.length + data.length); lhb.set(lh, 0); lhb.set(name, lh.length); lhb.set(data, lh.length + name.length);
+      parts.push(lhb);
+      central.push([0x50, 0x4b, 0x01, 0x02, ...w16(20), ...w16(20), ...w16(0), ...w16(0), ...w16(0), ...w16(0), ...w32(crc), ...w32(data.length), ...w32(data.length), ...w16(name.length), ...w16(0), ...w16(0), ...w16(0), ...w16(0), ...w32(0), ...w32(offset)].concat([...name]));
+      offset += lhb.length;
+    }
+    const cstart = offset; let csize = 0; const cparts = central.map(c => Uint8Array.from(c)); for (const c of cparts) csize += c.length;
+    const eocd = Uint8Array.from([0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0, ...w16(files.length), ...w16(files.length), ...w32(csize), ...w32(cstart), 0, 0]);
+    let total = 0; for (const p of parts) total += p.length; total += csize + eocd.length;
+    const out = new Uint8Array(total); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } for (const c of cparts) { out.set(c, o); o += c.length; } out.set(eocd, o);
+    return out;
+  }
+
+  // ---------------------------------------------------------------- PCAP writer / sub-capture / anonymizer
+  function writePcap(records, linktype) {
+    let total = 24; for (const r of records) total += 16 + r.data.length;
+    const out = new Uint8Array(total); const dv = new DataView(out.buffer);
+    dv.setUint32(0, 0xa1b2c3d4, true); dv.setUint16(4, 2, true); dv.setUint16(6, 4, true); dv.setUint32(16, 262144, true); dv.setUint32(20, linktype & 0x0fffffff, true);
+    let o = 24;
+    for (const r of records) { dv.setUint32(o, Math.floor(r.ts), true); dv.setUint32(o + 4, Math.round((r.ts % 1) * 1e6) % 1000000, true); dv.setUint32(o + 8, r.data.length, true); dv.setUint32(o + 12, r.len || r.data.length, true); out.set(r.data, o + 16); o += 16 + r.data.length; }
+    return out;
+  }
+  function ipChk(b, o, len) { let s = 0; for (let i = 0; i < len; i += 2) s += (b[o + i] << 8) | (b[o + i + 1] || 0); while (s >> 16) s = (s & 0xffff) + (s >> 16); return (~s) & 0xffff; }
+  function anonPacket(data, lt, ipMap, macMap, ip6Map) {
+    const b = data.slice(); let o = 0, etype = 0;
+    const mapMac = off => { if (off + 6 > b.length) return; const k = b.subarray(off, off + 6).join(':'); if (k === '255:255:255:255:255:255' || k === '0:0:0:0:0:0') return; let m = macMap.get(k); if (!m) { const n = macMap.size + 1; m = [2, 0, 0, (n >> 16) & 255, (n >> 8) & 255, n & 255]; macMap.set(k, m); } for (let i = 0; i < 6; i++) b[off + i] = m[i]; };
+    const mapIp4 = off => { if (off + 4 > b.length) return; const k = b[off] + '.' + b[off + 1] + '.' + b[off + 2] + '.' + b[off + 3]; if (isPrivate(k)) { /* keep multicast/broadcast structure but still remap privately */ } let m = ipMap.get(k); if (!m) { const n = ipMap.size + 11; m = [10, (n >> 16) & 255, (n >> 8) & 255, n & 255]; ipMap.set(k, m); } for (let i = 0; i < 4; i++) b[off + i] = m[i]; };
+    const mapIp6 = off => { if (off + 16 > b.length) return; let k = ''; for (let i = 0; i < 16; i++) k += b[off + i]; let m = ip6Map.get(k); if (!m) { const n = ip6Map.size + 1; m = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, (n >> 24) & 255, (n >> 16) & 255, (n >> 8) & 255, n & 255, 0, 1]; ip6Map.set(k, m); } for (let i = 0; i < 16; i++) b[off + i] = m[i]; };
+    if (lt === 1) { if (b.length < 14) return b; mapMac(0); mapMac(6); etype = (b[12] << 8) | b[13]; o = 14; let g = 0; while ((etype === 0x8100 || etype === 0x88a8) && g++ < 4) { etype = (b[o + 2] << 8) | b[o + 3]; o += 4; } }
+    else if (lt === 101 || lt === 12 || lt === 14 || lt === 228 || lt === 229) { etype = (b[0] >> 4) === 6 ? 0x86dd : 0x0800; o = 0; }
+    else return b;
+    if (etype === 0x0800 && o + 20 <= b.length) {
+      const ihl = (b[o] & 0x0f) * 4; mapIp4(o + 12); mapIp4(o + 16);
+      const proto = b[o + 9], l4 = o + ihl;
+      if (proto === 6 && l4 + 20 <= b.length) { const doff = (b[l4 + 12] >> 4) * 4; b[l4 + 16] = b[l4 + 17] = 0; for (let i = l4 + doff; i < b.length; i++) b[i] = 0; }
+      else if (proto === 17 && l4 + 8 <= b.length) { b[l4 + 6] = b[l4 + 7] = 0; for (let i = l4 + 8; i < b.length; i++) b[i] = 0; }
+      else if (proto === 1 && l4 + 8 <= b.length) { for (let i = l4 + 8; i < b.length; i++) b[i] = 0; }
+      b[o + 10] = b[o + 11] = 0; const c = ipChk(b, o, ihl); b[o + 10] = (c >> 8) & 255; b[o + 11] = c & 255;
+    } else if (etype === 0x86dd && o + 40 <= b.length) { mapIp6(o + 8); mapIp6(o + 24); for (let i = o + 40; i < b.length; i++) b[i] = 0; }
+    else if (etype === 0x0806 && o + 28 <= b.length) { mapMac(o + 8); mapIp4(o + 14); mapMac(o + 18); mapIp4(o + 24); }
+    return b;
+  }
+  function exportPcap(capture, nSet, opts) {
+    opts = opts || {};
+    const sel = nSet ? capture.packets.filter((_, i) => nSet.has(i + 1)) : capture.packets;
+    if (!sel.length) return new Uint8Array(0);
+    const lt = sel[0].linktype;
+    let recs;
+    if (opts.anonymize) { const ipMap = new Map(), macMap = new Map(), ip6Map = new Map(); recs = sel.map(r => ({ ts: r.ts, len: r.data.length, data: anonPacket(r.data, r.linktype, ipMap, macMap, ip6Map) })); }
+    else recs = sel.map(r => ({ ts: r.ts, len: r.len, data: r.data }));
+    return writePcap(recs, lt);
+  }
+
+  return { parseCapture, decodePacket, analyze, buildDemoPcap, buildReport, reportMarkdown, exportIoCs, exportPcap, setDecodeAs, makeZip, fmtBytes, isPrivate, flagStr, LINKTYPES, PORT_NAMES, thresholdsFor, VERSION: '2.1' };
+})();
+if (typeof module !== 'undefined') module.exports = FluxHunt;
