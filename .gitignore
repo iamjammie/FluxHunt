@@ -1,5 +1,7 @@
 # Build output that is regenerated from source (analyzer.js + page.html)
-index.html
+app.html
+
+# Note: index.html is the hand-written GitHub Pages landing page and IS committed.
 
 # Packaged deliverables
 *.zip

@@ -5,9 +5,12 @@
  *   node build.mjs
  *
  * Outputs:
- *   index.html      page.html with analyzer.js inlined (keeps the web-font <link>; used for hosting)
+ *   app.html        page.html with analyzer.js inlined (keeps the web-font <link>; the full hosted app)
  *   FluxHunt.html   the portable standalone file: a full HTML document with NO network requests
  *                   (the Google-Fonts <link> is removed; CSS already declares system-font fallbacks)
+ *
+ * index.html is NOT generated here — it is the hand-written landing page (committed) that GitHub
+ * Pages serves, and it links to the self-contained FluxHunt.html to launch the tool.
  *
  * There is no bundler and there are no dependencies — the engine and UI are kept as separate
  * readable sources so the engine can be unit-tested in Node without a browser.
@@ -30,7 +33,7 @@ if (!ui.includes(PLACEHOLDER)) {
 // NOTE: use a function replacement so `$` sequences in the engine source (e.g. $&, $', template
 // literals) are inserted literally rather than interpreted as replacement patterns.
 const hosted = ui.replace(PLACEHOLDER, () => engine);
-writeFileSync('index.html', hosted);
+writeFileSync('app.html', hosted);
 
 // 2) portable build — full document, zero network
 let body = hosted
@@ -52,4 +55,4 @@ const remote = [...portable.matchAll(/https?:\/\/[^\s"')]+/g)].map(m => m[0])
   .filter(u => !u.startsWith('http://schemas.mandiant.com'));
 if (remote.length) { console.error('Build warning: portable file references remote resources:', [...new Set(remote)]); }
 
-console.log('Built index.html (' + (hosted.length / 1024 | 0) + ' KB) and FluxHunt.html (' + (portable.length / 1024 | 0) + ' KB).');
+console.log('Built app.html (' + (hosted.length / 1024 | 0) + ' KB) and FluxHunt.html (' + (portable.length / 1024 | 0) + ' KB).');
