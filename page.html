@@ -398,11 +398,11 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     <div id="winBanner" class="winbanner" hidden></div>
     <div id="filterBanner" class="filterbanner" hidden></div>
     <nav class="tabs" role="tablist" id="tabs">
-      <button class="tab" role="tab" data-view="report" aria-selected="false" type="button">IR Report</button>
-      <button class="tab" role="tab" data-view="findings" aria-selected="true" type="button">Findings <span class="n" id="nFind">0</span></button>
-      <button class="tab" role="tab" data-view="graph" aria-selected="false" type="button">Attack Map</button>
+      <button class="tab" role="tab" data-view="overview" aria-selected="true" type="button">Overview</button>
       <button class="tab" role="tab" data-view="expert" aria-selected="false" type="button">Expert</button>
-      <button class="tab" role="tab" data-view="overview" aria-selected="false" type="button">Overview</button>
+      <button class="tab" role="tab" data-view="report" aria-selected="false" type="button">IR Report</button>
+      <button class="tab" role="tab" data-view="findings" aria-selected="false" type="button">Findings <span class="n" id="nFind">0</span></button>
+      <button class="tab" role="tab" data-view="graph" aria-selected="false" type="button">Attack Map</button>
       <button class="tab" role="tab" data-view="hosts" aria-selected="false" type="button">Hosts <span class="n" id="nHosts">0</span></button>
       <button class="tab" role="tab" data-view="sessions" aria-selected="false" type="button">Sessions <span class="n" id="nSess">0</span></button>
       <button class="tab" role="tab" data-view="iocs" aria-selected="false" type="button">Indicators <span class="n" id="nIocs">0</span></button>
@@ -579,7 +579,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     <div class="sheet-head"><h2 id="helpTitle">FluxHunt — help &amp; shortcuts</h2><button class="btn small" id="helpClose" type="button">Close</button></div>
     <div class="sheet-body">
       <section class="setgrp"><h3>Keyboard shortcuts</h3>
-        <dl class="helpgrid"><dt><span class="kbd">/</span></dt><dd>Open search</dd><dt><span class="kbd">?</span></dt><dd>This help</dd><dt><span class="kbd">g</span> then <span class="kbd">f/o/a/r/h/s/i/p</span></dt><dd>Jump to Findings / Overview / Attack map / Report / Hosts / Sessions / Indicators / Packets</dd><dt><span class="kbd">Esc</span></dt><dd>Close any dialog</dd><dt><span class="kbd">↑</span>/<span class="kbd">↓</span>, <span class="kbd">Enter</span></dt><dd>Navigate and open search results</dd></dl>
+        <dl class="helpgrid"><dt><span class="kbd">/</span></dt><dd>Open search</dd><dt><span class="kbd">?</span></dt><dd>This help</dd><dt><span class="kbd">g</span> then <span class="kbd">o/e/r/f/a/h/s/i/b/p</span></dt><dd>Jump to Overview / Expert / Report / Findings / Attack map / Hosts / Sessions / Indicators / Objects / Packets</dd><dt><span class="kbd">Esc</span></dt><dd>Close any dialog</dd><dt><span class="kbd">↑</span>/<span class="kbd">↓</span>, <span class="kbd">Enter</span></dt><dd>Navigate and open search results</dd></dl>
       </section>
       <section class="setgrp"><h3>The views</h3>
         <dl class="helpgrid">
@@ -735,7 +735,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 
   // ---------------- tabs
   $('tabs').addEventListener('click', e => { const b = e.target.closest('.tab'); if (b) showView(b.dataset.view); });
-  const VIEWS = ['report', 'findings', 'graph', 'expert', 'overview', 'hosts', 'sessions', 'iocs', 'objects', 'packets'];
+  const VIEWS = ['overview', 'expert', 'report', 'findings', 'graph', 'hosts', 'sessions', 'iocs', 'objects', 'packets'];
   function showView(v) {
     if (!VIEWS.includes(v)) v = 'findings';
     for (const b of document.querySelectorAll('.tab')) b.setAttribute('aria-selected', b.dataset.view === v ? 'true' : 'false');
@@ -775,7 +775,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     const keep = render._keep; render._keep = false;
     const hashV = location.hash.slice(1);
     const cur = keep ? ((document.querySelector('.tab[aria-selected="true"]') || {}).dataset || {}).view : (VIEWS.includes(hashV) ? hashV : null);
-    showView(cur || 'findings');
+    showView(cur || 'overview');
   }
 
   function renderFindings() {
@@ -1687,7 +1687,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     if (e.key === '/') { e.preventDefault(); openPalette(); return; }
     if (e.key === '?') { e.preventDefault(); openHelp(); return; }
     if (e.key === 'g') { gPending = true; setTimeout(() => gPending = false, 1200); return; }
-    if (gPending) { const map = { f: 'findings', o: 'overview', a: 'graph', r: 'report', h: 'hosts', s: 'sessions', i: 'iocs', p: 'packets' }; if (map[e.key] && !$('results').hidden) { showView(map[e.key]); gPending = false; return; } gPending = false; }
+    if (gPending) { const map = { o: 'overview', e: 'expert', r: 'report', f: 'findings', a: 'graph', h: 'hosts', s: 'sessions', i: 'iocs', b: 'objects', p: 'packets' }; if (map[e.key] && !$('results').hidden) { showView(map[e.key]); gPending = false; return; } gPending = false; }
   });
 
   // ---------------- settings: display group wiring (theme + density)

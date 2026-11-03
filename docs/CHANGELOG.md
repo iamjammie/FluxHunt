@@ -29,6 +29,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   `after:` / `before:` tokens (seconds from capture start).
 
 ### Changed
+- **Tabs reordered into an analyst flow:** Overview → Expert → IR Report → Findings → Attack Map →
+  Hosts → Sessions → Indicators → Objects → Packets (orientation → briefing → report → detail). A
+  loaded capture now opens on Overview, and `g` shortcuts gained `e` (Expert) and `b` (Objects).
 - **Attack chain redesigned as a horizontal timeline.** The kill-chain is now a full-width
   progressive bar: numbered, phase-coloured stage markers joined by a progress line, each with its
   phase, time offset and a short title, laid out left-to-right (scrolls when long). Hovering a stage
