@@ -10,6 +10,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
+- **Statistics panel** on Overview: a packet-length distribution (bucketed) and a DNS
+  service-response-time table (per resolver: responses, average and max latency), scoped to the
+  current window when windowed analysis is active.
 - **Flow sequence graph & TCP stream graphs.** Follow Stream now has three tabs: **Conversation**
   (the existing transcript/hex), **Flow graph** — a Wireshark-style vertical ladder of every TCP
   segment between client and server (SYN/SYN-ACK/ACK, data with lengths, FIN/RST, colour-coded) —

@@ -353,6 +353,14 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 .sgcap { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; margin: 10px 0 4px; }
 #sgSeq, #sgWin, #sgRtt { width: 100%; display: block; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
 .s-syn { color: var(--accent); font-weight: 600; } .s-rst { color: var(--high); font-weight: 600; }
+/* statistics */
+.statgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.statgrid h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; margin: 0 0 8px; }
+.statT { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.statT th, .statT td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.statT th { color: var(--muted); font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+.statT td.num, .statT th.num { text-align: right; }
+@media (max-width: 620px) { .statgrid { grid-template-columns: 1fr; } }
 
 /* settings / modal */
 .modal { position: fixed; inset: 0; background: rgba(10,16,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: max(24px, env(safe-area-inset-top)) 16px 24px; z-index: 50; overflow-y: auto; }
@@ -473,6 +481,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
         </div>
         <div class="panel wide"><h2>Packets over time</h2><canvas id="timeline" height="160"></canvas><div class="hint" id="timelineHint"></div></div>
         <div class="panel wide"><h2>Throughput (bytes/s)</h2><canvas id="iograph" height="150"></canvas></div>
+        <div class="panel wide"><h2>Statistics</h2><div class="statgrid"><div><h3>Packet length distribution</h3><div class="bars" id="lenDist"></div></div><div><h3>Service response time (DNS)</h3><div id="dnsSrt"></div></div></div></div>
         <div class="panel wide"><h2>Expert info · TCP health</h2><div id="tcpHealthSummary" class="capinfo" style="margin-bottom:6px"></div><div class="scroll"><table id="tcpHealthTable"></table></div></div>
         <div class="panel wide"><h2>Protocol hierarchy</h2><div class="scroll"><table id="protoTree"></table></div></div>
         <div class="panel"><h2>Protocols</h2><div class="bars" id="protoBars"></div></div>
@@ -3154,7 +3163,24 @@ const FluxHunt = (function () {
     $('talkers').innerHTML = '<thead><tr><th>Host</th><th class="num">Packets</th><th class="num">Sent</th><th class="num">Received</th></tr></thead><tbody>' + r.topTalkers.map(h => `<tr><td><button class="link" data-host="${esc(h.ip)}">${esc(h.ip)}</button> ${h.internal ? '' : '<span class="zone ext">ext</span>'}</td><td class="num mono">${fmtN(h.pkts)}</td><td class="num mono">${A.fmtBytes(h.bytesOut)}</td><td class="num mono">${A.fmtBytes(h.bytesIn)}</td></tr>`).join('') + '</tbody>';
     $('convs').innerHTML = '<thead><tr><th>A</th><th>B</th><th class="num">A→B</th><th class="num">B→A</th><th>Protocols</th></tr></thead><tbody>' + r.topConvs.map(c => `<tr><td><button class="link" data-host="${esc(c.a)}">${esc(c.a)}</button></td><td><button class="link" data-host="${esc(c.b)}">${esc(c.b)}</button></td><td class="num mono">${A.fmtBytes(c.bytesAB)}</td><td class="num mono">${A.fmtBytes(c.bytesBA)}</td><td>${esc([...c.protos].slice(0, 4).join(', '))}</td></tr>`).join('') + '</tbody>';
     $('timelineHint').textContent = 'Packets per bar; each bar is ' + fmtDur(r.bucket) + '. Bars whose window contains a finding are tinted by its highest severity.';
-    renderProtoTree(); renderTcpHealth(); makeSortable($('talkers')); makeSortable($('convs'));
+    renderProtoTree(); renderTcpHealth(); renderStats(); makeSortable($('talkers')); makeSortable($('convs'));
+  }
+  function renderStats() {
+    const r = state.result; const s0 = r.summary.start, s1 = r.summary.end;
+    const pk = state.pkts.filter(p => p.ts >= s0 && p.ts <= s1);
+    const buckets = [[0, 63], [64, 127], [128, 255], [256, 511], [512, 1023], [1024, 1513], [1514, 1e9]];
+    const labels = ['≤63', '64–127', '128–255', '256–511', '512–1023', '1024–1513', '≥1514'];
+    const counts = buckets.map(() => 0);
+    for (const p of pk) { const L = p.len; for (let i = 0; i < buckets.length; i++) if (L >= buckets[i][0] && L <= buckets[i][1]) { counts[i]++; break; } }
+    bars($('lenDist'), labels.map((l, i) => [l, counts[i]]));
+    const pend = new Map(), bySrv = new Map();
+    for (const p of pk) {
+      if (!p.dns) continue; const d = p.dns;
+      if (!d.qr) pend.set(d.id + '|' + p.src + '|' + p.dst, p.ts);
+      else { const k = d.id + '|' + p.dst + '|' + p.src; const qt = pend.get(k); if (qt != null) { pend.delete(k); const rtt = p.ts - qt; if (rtt >= 0 && rtt < 30) { let g = bySrv.get(p.src); if (!g) { g = { srv: p.src, n: 0, sum: 0, max: 0 }; bySrv.set(p.src, g); } g.n++; g.sum += rtt; if (rtt > g.max) g.max = rtt; } } }
+    }
+    const srv = [...bySrv.values()].sort((a, b) => b.n - a.n).slice(0, 8);
+    $('dnsSrt').innerHTML = srv.length ? `<table class="statT"><thead><tr><th>DNS server</th><th class="num">Responses</th><th class="num">Avg</th><th class="num">Max</th></tr></thead><tbody>${srv.map(g => `<tr><td class="mono">${esc(g.srv)}</td><td class="num mono">${fmtN(g.n)}</td><td class="num mono">${(g.sum / g.n * 1000).toFixed(1)} ms</td><td class="num mono">${(g.max * 1000).toFixed(1)} ms</td></tr>`).join('')}</tbody></table>` : '<p class="hint" style="flex-basis:auto">No matched DNS query/response pairs in scope.</p>';
   }
   function renderTcpHealth() {
     const h = state.result.tcpHealth; if (!h) return;
