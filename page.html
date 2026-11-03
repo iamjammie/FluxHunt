@@ -281,6 +281,51 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 .cbar-track { grid-column: 1 / -1; height: 7px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
 .cbar-fill { height: 100%; border-radius: 4px; }
 @media (max-width: 560px) { .fcat { grid-template-columns: 1fr; } }
+/* expert tab */
+.exp-hero { border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; border: 1px solid var(--line); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.exp-hero .lvl { font-size: 25px; font-weight: 800; letter-spacing: -.3px; display: flex; align-items: center; gap: 10px; }
+.exp-hero .lvl .glyph { font-size: 26px; }
+.exp-hero .head { font-size: 13.5px; color: var(--muted); max-width: 60ch; }
+.exp-hero .head b { color: var(--fg); }
+.exp-hero .metrics { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.exp-hero.r-crit, .exp-hero.r-high { background: var(--high-soft); border-color: var(--high); }
+.exp-hero.r-crit .lvl, .exp-hero.r-high .lvl { color: var(--high); }
+.exp-hero.r-elev { background: var(--medium-soft); border-color: var(--medium); }
+.exp-hero.r-elev .lvl { color: var(--medium); }
+.exp-hero.r-low { background: var(--low-soft); border-color: var(--low); }
+.exp-hero.r-low .lvl { color: var(--low); }
+.exp-hero.r-clean { background: var(--accent-soft); border-color: var(--accent); }
+.exp-hero.r-clean .lvl { color: var(--accent); }
+.exp-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.exp-card { background: var(--surface); border: 1px solid var(--line); border-left-width: 4px; border-radius: var(--radius); padding: 11px 14px; display: grid; gap: 3px; align-content: start; }
+.exp-card.clk { cursor: pointer; }
+.exp-card.clk:hover { border-color: var(--accent); }
+.exp-card .q { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
+.exp-card .q .glyph { font-size: 15px; }
+.exp-card .a { font-size: 18px; font-weight: 800; line-height: 1.15; }
+.exp-card .d { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.exp-card.bad { border-left-color: var(--high); } .exp-card.bad .a { color: var(--high); }
+.exp-card.warn { border-left-color: var(--medium); } .exp-card.warn .a { color: var(--medium); }
+.exp-card.ok { border-left-color: var(--accent); } .exp-card.ok .a { color: var(--accent); }
+.exp-card.neutral { border-left-color: var(--low); }
+.exp-tactics { display: flex; flex-wrap: wrap; gap: 8px; }
+.exp-tactic { border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; background: var(--surface-2); display: inline-flex; align-items: center; gap: 7px; }
+.exp-tactic b { font-family: var(--font-mono); font-size: 11px; color: var(--muted); font-weight: 600; }
+.exp-actions { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 13px; }
+.exp-actions li { line-height: 1.4; }
+.exp-actions .mono { font-family: var(--font-mono); }
+.exp-net-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.exp-net-row:last-child { border-bottom: 0; }
+.exp-sev { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 auto; }
+.exp-sev.error { background: var(--high); } .exp-sev.warn { background: var(--medium); } .exp-sev.note { background: var(--low); } .exp-sev.chat { background: var(--muted); }
+.exp-net-row .lbl { font-weight: 600; } .exp-net-row .ct { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); font-family: var(--font-mono); white-space: nowrap; }
+.exp-net-row .ex { color: var(--muted); font-size: 12px; }
+.emptybox { border: 1px dashed var(--line); border-radius: var(--radius); padding: 28px; text-align: center; color: var(--muted); font-size: 13px; }
+/* objects tab */
+.objdanger { color: var(--high); font-weight: 700; }
+#objTable td.mono { font-family: var(--font-mono); }
+#objTable tr.danger td:first-child { box-shadow: inset 3px 0 0 var(--high); }
+#objTable .objbtn { white-space: nowrap; }
 
 /* settings / modal */
 .modal { position: fixed; inset: 0; background: rgba(10,16,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: max(24px, env(safe-area-inset-top)) 16px 24px; z-index: 50; overflow-y: auto; }
@@ -356,10 +401,12 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
       <button class="tab" role="tab" data-view="report" aria-selected="false" type="button">IR Report</button>
       <button class="tab" role="tab" data-view="findings" aria-selected="true" type="button">Findings <span class="n" id="nFind">0</span></button>
       <button class="tab" role="tab" data-view="graph" aria-selected="false" type="button">Attack Map</button>
+      <button class="tab" role="tab" data-view="expert" aria-selected="false" type="button">Expert</button>
       <button class="tab" role="tab" data-view="overview" aria-selected="false" type="button">Overview</button>
       <button class="tab" role="tab" data-view="hosts" aria-selected="false" type="button">Hosts <span class="n" id="nHosts">0</span></button>
       <button class="tab" role="tab" data-view="sessions" aria-selected="false" type="button">Sessions <span class="n" id="nSess">0</span></button>
       <button class="tab" role="tab" data-view="iocs" aria-selected="false" type="button">Indicators <span class="n" id="nIocs">0</span></button>
+      <button class="tab" role="tab" data-view="objects" aria-selected="false" type="button">Objects <span class="n" id="nObj">0</span></button>
       <button class="tab" role="tab" data-view="packets" aria-selected="false" type="button">Packets <span class="n" id="nPkts">0</span></button>
     </nav>
 
@@ -378,6 +425,16 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     <div class="view" id="view-findings" hidden>
       <div class="chips" id="sevChips"></div>
       <div id="findingList"></div>
+    </div>
+
+    <div class="view" id="view-expert" hidden>
+      <div id="expHero"></div>
+      <div class="exp-cards" id="expCards"></div>
+      <div class="panel wide" id="expAttackPanel" hidden><h2>ATT&amp;CK tactics observed</h2><div id="expAttack" class="exp-tactics"></div></div>
+      <div class="grid2">
+        <div class="panel"><div class="head-row"><h2>Immediate actions</h2><span class="hint">Prioritised from the highest-severity findings</span></div><ol id="expActions" class="exp-actions"></ol></div>
+        <div class="panel"><div class="head-row"><h2>Network expert info</h2><span class="hint">Wireshark-style protocol health</span></div><div id="expNet"></div></div>
+      </div>
     </div>
 
     <div class="view" id="view-overview" hidden>
@@ -450,6 +507,16 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
       <div class="scroll"><table class="clickrow" id="iocTable"></table></div>
     </div>
 
+    <div class="view" id="view-objects" hidden>
+      <div class="filterbar">
+        <div class="hint">Files reconstructed from the captured traffic (HTTP transfers and cleartext responses). Download any object, or all as a ZIP. Executables and archives are flagged <span class="objdanger">dangerous</span>. Each object is carved up to 1&nbsp;MB.</div>
+        <span style="flex-basis:100%"></span>
+        <button class="btn small" id="objZip" type="button">Download all (ZIP)</button>
+      </div>
+      <div id="objEmpty" class="emptybox" hidden></div>
+      <div class="scroll"><table id="objTable"></table></div>
+    </div>
+
     <div class="view" id="view-packets" hidden>
       <div class="filterbar">
         <input id="filter" placeholder="Filter packets… e.g. ip:10.0.0.5 port:443" autocomplete="off" spellcheck="false">
@@ -520,6 +587,8 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
           <dt>Findings</dt><dd>Every detection, filterable by severity and category. Each links to its packets, hosts and ATT&amp;CK technique.</dd>
           <dt>Attack Map</dt><dd>Force-directed host graph: node colour = role (red = C2/exfil, orange = flagged), node size = traffic, red ring = high severity; edges are conversations (thicker = more bytes, arrow = main data direction). Use Fit/Freeze/Labels, click a legend role to hide it, or open the host table below. Alongside: the reconstructed kill-chain and a findings donut.</dd>
           <dt>Overview</dt><dd>Timeline analysis (drag on the strip to select a window, then <b>Filter packets</b> to scope the Packets tab or <b>Analyze window</b> to re-run every detector on just that slice; <b>Return to full capture</b> from the banner), throughput, protocol hierarchy, expert-info / TCP health, top talkers and conversations. The packet filter also accepts <code>after:</code>/<code>before:</code> (seconds from start).</dd>
+          <dt>Expert</dt><dd>At-a-glance incident briefing for IR / CISO: an overall risk verdict and colour-coded answer cards (confirmed incident, affected hosts, external infrastructure, credentials exposed, data exfiltration, malware delivered, C2/beaconing, lateral movement, reconnaissance), the ATT&amp;CK tactics observed, prioritised immediate actions, and Wireshark-style network expert info (retransmissions, zero windows, resets). Click a card to jump to its findings.</dd>
+          <dt>Objects</dt><dd>Files reconstructed from the traffic (cleartext HTTP transfers). Download any object or all as a ZIP with a manifest; executables and archives are flagged. Encrypted (TLS) transfers cannot be extracted.</dd>
           <dt>Hosts</dt><dd>Every host; click one for a consolidated host view (findings, sessions, enrichment).</dd>
           <dt>Sessions</dt><dd>One row per connection with bytes, RTT, retransmissions and a <b>Follow Stream</b> button.</dd>
           <dt>Indicators</dt><dd>External IPs, domains, carved files, certificates, credentials, JA3/JA4/JA3S and assets — exportable as STIX, MISP, CSV, Zeek, Suricata, YARA, Sigma, OpenIOC, CEF or ATT&amp;CK Navigator.</dd>
@@ -627,7 +696,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
       else name = sources[0].name;
       status('Looking for anomalies…', true); await sleep();
       const result = A.analyze(pkts, cap, analyzeOpts());
-      state = Object.assign(state, { name, capture: cap, pkts, result, sources, sevFilter: 'all', filter: '', shown: 0, sessFilter: '', sessShown: 0, iocTab: 'ips', win: null, fullResult: null, timeWin: null, tlZoom: null, brush: null });
+      state = Object.assign(state, { name, capture: cap, pkts, result, sources, sevFilter: 'all', filter: '', shown: 0, sessFilter: '', sessShown: 0, iocTab: 'ips', win: null, fullResult: null, timeWin: null, tlZoom: null, brush: null, report: null });
       state.sevOf = new Map();
       const order = { high: 0, medium: 1, low: 2, info: 3 };
       for (const f of result.findings) for (const pn of f.packets) { const cur = state.sevOf.get(pn); if (!cur || order[f.severity] < order[cur]) state.sevOf.set(pn, f.severity); }
@@ -666,7 +735,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 
   // ---------------- tabs
   $('tabs').addEventListener('click', e => { const b = e.target.closest('.tab'); if (b) showView(b.dataset.view); });
-  const VIEWS = ['report', 'findings', 'graph', 'overview', 'hosts', 'sessions', 'iocs', 'packets'];
+  const VIEWS = ['report', 'findings', 'graph', 'expert', 'overview', 'hosts', 'sessions', 'iocs', 'objects', 'packets'];
   function showView(v) {
     if (!VIEWS.includes(v)) v = 'findings';
     for (const b of document.querySelectorAll('.tab')) b.setAttribute('aria-selected', b.dataset.view === v ? 'true' : 'false');
@@ -696,7 +765,8 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     $('warnings').innerHTML = s.warnings.map(w => `<div class="warn">${esc(w)}</div>`).join('');
     $('nFind').textContent = r.findings.length; $('nHosts').textContent = r.hosts.length; $('nPkts').textContent = fmtN(s.packets);
     $('nSess').textContent = fmtN(r.sessions.length); $('nIocs').textContent = fmtN(r.iocs.ips.length + r.iocs.domains.length);
-    renderFindings(); renderOverview(); renderHosts(); renderReport();
+    $('nObj').textContent = fmtN((r.objects || []).length);
+    renderFindings(); renderOverview(); renderHosts(); renderReport(); renderExpert(); renderObjects();
     $('sessFilter').value = ''; state.sessFilter = ''; applySessions();
     renderIocs();
     $('filter').value = ''; state.filter = ''; applyFilter();
@@ -742,6 +812,87 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     const max = Math.max(1, ...rows.map(r => r[1]));
     el.innerHTML = rows.length ? rows.map(r => `<div class="bar"><span class="name mono" title="${esc(r[0])}">${esc(r[0])}</span><div class="track"><div class="fill" style="width:${(r[1] / max * 100).toFixed(1)}%"></div></div><span class="num mono">${fmt ? fmt(r[1]) : fmtN(r[1])}</span></div>`).join('') : '<span class="hint">none</span>';
   }
+  // ---------------- Expert tab (IR / CISO incident briefing + network expert info)
+  function renderExpert() {
+    const r = state.result; if (!r) return; const rep = A.buildReport(r, reportMeta());
+    const sv = r.severity, high = sv.high || 0, med = sv.medium || 0, low = sv.low || 0;
+    const F = r.findings; const anyCat = cats => F.filter(f => cats.includes(f.category));
+    const affected = new Set(); for (const f of F) if (f.severity === 'high' || f.severity === 'medium') for (const h of (f.hosts || [])) if (A.isPrivate(h)) affected.add(h);
+    let cls, word, glyph;
+    if (high >= 3) { cls = 'r-crit'; word = 'Critical'; glyph = '🔴'; }
+    else if (high >= 1) { cls = 'r-high'; word = 'High'; glyph = '🟠'; }
+    else if (med >= 1) { cls = 'r-elev'; word = 'Elevated'; glyph = '🟡'; }
+    else if (low >= 1) { cls = 'r-low'; word = 'Low'; glyph = '🔵'; }
+    else { cls = 'r-clean'; word = 'Clean'; glyph = '🟢'; }
+    const metrics = ['high', 'medium', 'low', 'info'].filter(k => sv[k]).map(k => `<span class="pill ${k}">${sv[k]} ${k}</span>`).join('') || '<span class="pill info">none</span>';
+    $('expHero').className = 'exp-hero ' + cls;
+    $('expHero').innerHTML = `<div class="lvl"><span class="glyph">${glyph}</span>${word} risk</div><div class="head"><b>${esc(rep.exec.headline)}.</b> ${affected.size} internal host${affected.size === 1 ? '' : 's'} appear in high/medium findings over ${r.summary.duration ? fmtDur(r.summary.duration) : 'the capture'}.${state.win ? ' Scoped to the selected time window.' : ''}</div><div class="metrics">${metrics}</div>`;
+    const cards = [];
+    const card = (g, q, kind, a, d, cat) => cards.push(`<div class="exp-card ${kind}${cat ? ' clk' : ''}"${cat ? ` data-cat="${esc(cat)}"` : ''}><div class="q"><span class="glyph">${g}</span>${esc(q)}</div><div class="a">${esc(a)}</div><div class="d">${d}</div></div>`);
+    card('🎯', 'Confirmed incident?', high ? 'bad' : (med ? 'warn' : 'ok'), high ? 'Yes' : (med ? 'Likely' : 'No'), high ? esc(high + ' high-severity detection' + (high === 1 ? '' : 's')) : (med ? esc(med + ' medium finding' + (med === 1 ? '' : 's') + ' to review') : 'No actionable findings'));
+    card('💻', 'Affected internal hosts', affected.size ? 'bad' : 'ok', String(affected.size), affected.size ? '<span class="mono">' + [...affected].slice(0, 4).map(esc).join(', ') + (affected.size > 4 ? ' +' + (affected.size - 4) : '') + '</span>' : 'None in high/medium findings');
+    const c2 = rep.exec.c2Endpoints || [];
+    card('🛰️', 'External infrastructure', c2.length ? 'warn' : 'ok', String(c2.length), c2.length ? '<span class="mono">' + c2.slice(0, 3).map(esc).join(', ') + (c2.length > 3 ? ' …' : '') + '</span>' : 'No external endpoints tied to findings');
+    const creds = r.artifacts.credentials || []; const credN = creds.reduce((a, c) => a + (c.count || 1), 0);
+    card('🔓', 'Credentials exposed?', creds.length ? 'bad' : 'ok', creds.length ? 'Yes' : 'No', creds.length ? esc(credN + ' capture(s): ' + [...new Set(creds.map(c => c.scheme))].slice(0, 4).join(', ')) : 'No cleartext or NTLM credentials seen', creds.length ? 'Cleartext credentials' : null);
+    const exf = anyCat(['Data exfiltration']);
+    card('📤', 'Data exfiltration?', exf.length ? 'bad' : 'ok', exf.length ? 'Yes' : 'No', exf.length ? esc(exf.length + ' finding' + (exf.length === 1 ? '' : 's') + ' — ' + exf[0].title) : 'No large outbound transfers flagged', exf.length ? 'Data exfiltration' : null);
+    const dang = (r.objects || []).filter(o => o.dangerous), mal = anyCat(['Malware delivery']);
+    card('🦠', 'Malware delivered?', (dang.length || mal.length) ? 'bad' : 'ok', (dang.length || mal.length) ? 'Yes' : 'No', dang.length ? esc(dang.length + ' executable/archive file(s) transferred — see Objects tab') : (mal.length ? esc(mal[0].title) : 'No malicious file transfers seen'));
+    const c2f = anyCat(['Command and control', 'Covert channel', 'Suspicious connection']);
+    card('📡', 'Active C2 / beaconing?', c2f.length ? 'bad' : 'ok', c2f.length ? 'Yes' : 'No', c2f.length ? esc(c2f.length + ' finding' + (c2f.length === 1 ? '' : 's') + ' — ' + c2f[0].title) : 'No beaconing or C2 channels flagged', c2f.length ? 'Command and control' : null);
+    const lat = anyCat(['Lateral movement']);
+    card('↔️', 'Lateral movement?', lat.length ? 'warn' : 'ok', lat.length ? 'Yes' : 'No', lat.length ? esc(lat[0].title) : 'No internal-to-internal movement flagged', lat.length ? 'Lateral movement' : null);
+    const rec = anyCat(['Reconnaissance']);
+    card('🧭', 'Reconnaissance?', rec.length ? 'warn' : 'ok', rec.length ? 'Yes' : 'No', rec.length ? esc(rec[0].title) : 'No scanning or enumeration flagged', rec.length ? 'Reconnaissance' : null);
+    $('expCards').innerHTML = cards.join('');
+    const cov = rep.attackCoverage || [];
+    $('expAttackPanel').hidden = !cov.length;
+    if (cov.length) $('expAttack').innerHTML = cov.map(t => `<span class="exp-tactic"><b>${esc(t.ta)}</b> ${esc(t.tactic)} <span class="muted">(${t.techniques.length})</span></span>`).join('');
+    const actions = []; const seen = new Set();
+    for (const f of F) { if (f.severity !== 'high' && f.severity !== 'medium') continue; const adv = (f.advice || '').trim(); if (!adv || seen.has(adv)) continue; seen.add(adv); actions.push(`<li><b>${esc(f.title)}:</b> ${esc(adv)}</li>`); if (actions.length >= 6) break; }
+    $('expActions').innerHTML = actions.length ? actions.join('') : '<li>No high or medium findings — monitor, and keep this capture for reference.</li>';
+    const h = r.tcpHealth || {}; const items = [];
+    const nrow = (sev, lbl, ct, ex) => items.push(`<div class="exp-net-row"><span class="exp-sev ${sev}"></span><span class="lbl">${esc(lbl)}</span>${ex ? `<span class="ex">${esc(ex)}</span>` : ''}<span class="ct">${esc(String(ct))}</span></div>`);
+    if (h.flows != null) {
+      if (h.retrans) nrow(h.retransPct >= 5 ? 'warn' : 'note', 'Retransmissions', h.retrans + (h.retransPct ? ' · ' + h.retransPct.toFixed(1) + '%' : ''), 'lost or congested segments resent');
+      if (h.zwin) nrow('warn', 'Zero-window events', h.zwin, 'a receiver stalled the sender');
+      if (h.ooo) nrow('note', 'Out-of-order segments', h.ooo, 'segments arrived out of sequence');
+      if (h.dupAck) nrow('note', 'Duplicate ACKs', h.dupAck, 'loss / fast-retransmit signal');
+      if (h.rst) nrow('note', 'Connection resets (RST)', h.rst, 'abrupt connection teardown');
+      const integ = anyCat(['Integrity']); if (integ.length) nrow('error', 'Capture quality issues', integ.length, integ[0].title);
+      nrow('chat', 'TCP connections analysed', h.flows, h.medianRttMs != null ? 'median handshake RTT ' + h.medianRttMs.toFixed(1) + ' ms' : '');
+      if (!h.retrans && !h.zwin && !h.ooo && !h.dupAck && !h.rst) nrow('chat', 'No TCP anomalies', 'clean', 'no retransmissions, resets or stalls');
+      $('expNet').innerHTML = items.join('');
+    } else { $('expNet').innerHTML = '<div class="hint">No TCP health data for this capture.</div>'; }
+  }
+  $('expCards').addEventListener('click', e => { const c = e.target.closest('.exp-card.clk'); if (!c || !c.dataset.cat) return; state.sevFilter = 'all'; state.catFilter = c.dataset.cat; renderFindings(); showView('findings'); window.scrollTo({ top: 0 }); });
+
+  // ---------------- Objects tab (download files reconstructed from the traffic)
+  function objName(o, i) {
+    let base = '';
+    if (o.path) { const raw = o.path.split('?')[0].split('/').pop() || ''; try { base = decodeURIComponent(raw); } catch (e) { base = raw; } }
+    base = (base || ('object-' + (i + 1))).replace(/[^\w.\-]+/g, '_').slice(0, 60);
+    if (!/\.[a-z0-9]{1,6}$/i.test(base) && o.ext) base += '.' + o.ext;
+    return base || ('object-' + (i + 1));
+  }
+  function truncMid(s, n) { s = s || ''; return s.length <= n ? s : s.slice(0, n - 10) + '…' + s.slice(-9); }
+  function renderObjects() {
+    const r = state.result; const objs = (r && r.objects) || []; const empty = $('objEmpty'), tbl = $('objTable');
+    if (!objs.length) { empty.hidden = false; empty.textContent = 'No transferred files were reconstructed. Objects are carved from cleartext HTTP responses; encrypted (TLS) transfers cannot be extracted without keys.'; tbl.innerHTML = ''; $('objZip').disabled = true; return; }
+    empty.hidden = true; $('objZip').disabled = false;
+    const rows = objs.map((o, i) => `<tr class="${o.dangerous ? 'danger' : ''}"><td class="mono">${esc(objName(o, i))}</td><td>${esc(o.type)}${o.dangerous ? ' <span class="objdanger">⚠ executable/archive</span>' : ''}${o.partial ? ' <span class="muted">(partial)</span>' : ''}</td><td class="num mono">${A.fmtBytes(o.bytes)}</td><td class="mono">${esc(o.src)} ← ${esc(o.dst)}</td><td class="mono" title="${esc((o.host || o.dst) + (o.path || ''))}">${esc(truncMid((o.host || o.dst) + (o.path || ''), 44))}</td><td class="mono" style="font-size:11px" title="${esc(o.sha256 || '')}">${esc((o.sha256 || '').slice(0, 16))}…</td><td><button class="btn small objbtn" data-oi="${i}" type="button">Download</button></td></tr>`).join('');
+    tbl.innerHTML = `<thead><tr><th>File</th><th>Type</th><th class="num">Size</th><th>Transfer</th><th>Source URL</th><th>SHA-256</th><th></th></tr></thead><tbody>${rows}</tbody>`;
+  }
+  $('objTable').addEventListener('click', e => { const b = e.target.closest('button[data-oi]'); if (!b) return; const i = +b.dataset.oi; const o = ((state.result && state.result.objects) || [])[i]; if (!o || !o.data) { toast('No stored bytes for this object'); return; } if (o.dangerous && !confirm('This object is an executable or archive and may be malware. Save it only to an isolated analysis environment. Continue?')) return; downloadBytes(o.data, objName(o, i), 'application/octet-stream'); });
+  $('objZip').addEventListener('click', () => {
+    const objs = (state.result && state.result.objects) || []; const used = new Set();
+    const files = objs.filter(o => o.data).map((o, i) => { let nm = objName(o, i); let k = nm; let c = 1; while (used.has(k)) k = (c++) + '_' + nm; used.add(k); return { name: 'objects/' + k, data: o.data }; });
+    if (!files.length) { toast('No stored object bytes to zip'); return; }
+    files.push({ name: 'objects/MANIFEST.csv', data: 'filename,type,bytes,sha256,src,dst,url,dangerous\n' + objs.map((o, i) => [objName(o, i), o.type, o.bytes, o.sha256, o.src, o.dst, (o.host || o.dst) + (o.path || ''), o.dangerous].map(v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"').join(',')).join('\n') });
+    downloadBytes(A.makeZip(files), (settings.analyst && settings.analyst.case ? settings.analyst.case + '-' : '') + 'fluxhunt-objects.zip', 'application/zip');
+  });
+
   function renderOverview() {
     const r = state.result;
     bars($('protoBars'), r.protocols);

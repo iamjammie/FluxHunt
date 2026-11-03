@@ -1139,7 +1139,8 @@ const FluxHunt = (function () {
           const path = c.req ? c.req.path : '';
           const extHit = path && EXE_EXT.test(path);
           if (magic || extHit) {
-            objects.push({ src: c.src, dst: c.dst, dport: c.dport, host: c.req ? c.req.host : c.host, path, method: c.req ? c.req.method : '', ctype, declaredLen: clen, bytes: body.length, partial: clen >= 0 && body.length < clen, sha256: sha256hex(body.subarray(0, Math.min(body.length, 1048576))), magic, idx: c.idx.slice(0, 8) });
+            const data = body.length > 1048576 ? body.subarray(0, 1048576) : body;
+            objects.push({ src: c.src, dst: c.dst, dport: c.dport, host: c.req ? c.req.host : c.host, path, method: c.req ? c.req.method : '', ctype, declaredLen: clen, bytes: body.length, partial: clen >= 0 && body.length < clen, sha256: sha256hex(data), magic, idx: c.idx.slice(0, 8), data });
           }
           if (/text|json|xml|javascript|form|html|^$/.test(ctype) || hdrEnd < 0) scanSecrets(ascii(body, 0, Math.min(body.length, 8192)), c.dst, c.src, 'HTTP body', (c.idx[0] || 0));
         }
@@ -1581,6 +1582,7 @@ const FluxHunt = (function () {
         assets: [...assets.values()].map(a => ({ ip: a.ip, names: [...a.names].slice(0, 5), os: [...a.os], sources: [...a.sources] })),
       },
       graph: buildGraph(),
+      objects: objects.map(o => ({ sha256: o.sha256, type: o.magic ? o.magic.type : 'unknown (matched by extension)', ext: o.magic ? o.magic.ext : '', dangerous: !!(o.magic && o.magic.danger), bytes: o.bytes, stored: o.data ? o.data.length : 0, partial: o.partial, host: o.host, path: o.path, method: o.method, src: o.src, dst: o.dst, dport: o.dport, ctype: o.ctype, n: o.idx[0] || 0, data: o.data })),
       tcpHealth: tcpHealthSummary,
       categories: (() => { const m = new Map(); for (const f of findings) inc(m, f.category); return [...m.entries()].map(([cat, n]) => ({ cat, n, sev: findings.filter(f => f.category === cat).reduce((w, f) => order[f.severity] < order[w] ? f.severity : w, 'info') })).sort((a, b) => order[a.sev] - order[b.sev] || b.n - a.n); })(),
       protoTree: buildProtoTree(),

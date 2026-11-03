@@ -10,6 +10,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
+- **Expert tab (IR / CISO briefing).** A dedicated tab that answers the questions an incident
+  responder or CISO asks first: an overall risk verdict (Critical/High/Elevated/Low/Clean) and
+  colour-coded answer cards — confirmed incident, affected internal hosts, external infrastructure,
+  credentials exposed, data exfiltration, malware delivered, active C2/beaconing, lateral movement,
+  reconnaissance — plus the ATT&CK tactics observed, prioritised immediate actions, and a
+  Wireshark-style network expert-info panel (retransmissions, zero windows, out-of-order, resets,
+  RTT). Cards link straight to the relevant findings.
+- **Objects tab (export objects).** Files reconstructed from the captured traffic (cleartext HTTP
+  transfers) can now be downloaded individually or all at once as a ZIP with a CSV manifest;
+  executables and archives are flagged and gated behind a confirmation. The engine now retains the
+  carved bytes (up to 1 MB per object), not just the hash.
 - **Timeline analysis (brushable window).** The Overview tab has a packets-over-time strip you can
   drag to select a time window. **Filter packets** scopes the Packets tab to the window live;
   **Analyze window** re-runs every detector on only that slice, scoping findings, hosts, sessions,
