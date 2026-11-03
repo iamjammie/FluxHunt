@@ -581,6 +581,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
       <section class="setgrp"><h3>Threat intelligence</h3>
         <label class="hint" style="flex-basis:auto" for="iocWatch">IOC watchlist — IPs, domains or SHA-256 hashes (any separator). Matches are flagged as high-severity confirmed hits. Defanged indicators (hxxp, 1[.]2[.]3[.]4) are accepted.</label>
         <textarea id="iocWatch" rows="3" placeholder="198.51.100.7&#10;evil.example.com&#10;&lt;sha256&gt;"></textarea>
+        <div class="setrow"><label></label><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><input type="file" id="feedFile" accept=".txt,.csv,.json,.ioc,.stix,.xml,.list" hidden><button class="btn small" id="feedImport" type="button">Import feed file…</button><span class="hint" id="feedMsg" style="flex-basis:auto">Offline import of a threat-intel feed (CSV, STIX, MISP, OpenIOC or a plain list). IPs, domains and SHA-256 hashes are extracted and merged into the watchlist — no network lookups.</span></div></div>
         <label class="hint" style="flex-basis:auto" for="allowList">Allowlist — IPs, domains or JA3 hashes to treat as known-good. Findings involving them are suppressed.</label>
         <textarea id="allowList" rows="2" placeholder="10.0.0.1&#10;trusted-cdn.example.com"></textarea>
       </section>
@@ -676,7 +677,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
   <button class="btn small" id="copyText" type="button">Copy findings as text</button>
 </div></footer>
 
-<script>
+<script id="fh-engine">
 /* FluxHunt — capture parser, protocol decoders and anomaly engine.
    Pure JS, no DOM. Works in the browser and in Node (for tests). */
 const FluxHunt = (function () {
@@ -2992,31 +2993,58 @@ const FluxHunt = (function () {
 
   // ---------------- loading (one or many files, merged by timestamp)
   const readBuf = file => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error('could not be read')); r.readAsArrayBuffer(file); });
+  // Worker harness: runs the exact same engine pipeline off the main thread so the UI never freezes
+  // while a large capture is parsed, decoded and analysed. Built from the inlined engine's own source.
+  const WORKER_HARNESS = "self.onmessage=async function(ev){try{var d=ev.data,files=d.files,opts=d.opts;if(FluxHunt.setDecodeAs){try{FluxHunt.setDecodeAs(d.decodeAs||[])}catch(e){}}var multi=files.length>1,parts=[],warnings=[],sources=[];async function sha(b){try{var h=await crypto.subtle.digest('SHA-256',b);return Array.from(new Uint8Array(h)).map(function(x){return x.toString(16).padStart(2,'0')}).join('')}catch(e){return null}}for(var fi=0;fi<files.length;fi++){var f=files[fi];self.postMessage({type:'progress',text:'Reading '+f.name+'…'});var cap=FluxHunt.parseCapture(f.buf),nn=cap.packets.length,dec=new Array(nn),bytes=0;for(var i=0;i<nn;i++){dec[i]=FluxHunt.decodePacket(cap.packets[i],i);bytes+=cap.packets[i].len;if((i&16383)===16383)self.postMessage({type:'progress',text:'Decoding '+f.name+'… '+(i+1)+' / '+nn})}for(var i=0;i<nn;i++)parts.push({raw:cap.packets[i],dp:dec[i],file:f.name});var ww=cap.warnings||[];for(var wi=0;wi<ww.length;wi++)warnings.push(f.name+': '+ww[wi]);var sha256=await sha(f.buf);sources.push({name:f.name,packets:nn,bytes:bytes,format:cap.format,start:nn?dec[0].ts:0,end:nn?dec[nn-1].ts:0,sha256:sha256})}if(!parts.length){self.postMessage({type:'done',empty:true});return}if(multi){self.postMessage({type:'progress',text:'Merging '+parts.length+' packets…'});parts.sort(function(a,b){return a.dp.ts-b.dp.ts})}var rawPackets=new Array(parts.length),pkts=new Array(parts.length);for(var i=0;i<parts.length;i++){parts[i].dp.n=i+1;parts[i].dp.file=parts[i].file;rawPackets[i]=parts[i].raw;pkts[i]=parts[i].dp}var cap2={format:multi?files.length+' files merged':sources[0].format,linktype:rawPackets.length?rawPackets[0].linktype:1,packets:rawPackets,warnings:warnings},name;if(multi){var all=sources.map(function(s){return s.name}).join(', ');name=files.length+' captures ('+(all.length>54?all.slice(0,54)+'…':all)+')'}else name=sources[0].name;self.postMessage({type:'progress',text:'Looking for anomalies…'});var result=FluxHunt.analyze(pkts,cap2,opts);self.postMessage({type:'done',pkts:pkts,cap:cap2,sources:sources,name:name,result:result})}catch(err){self.postMessage({type:'error',message:String(err&&err.message||err)})}};";
+  function runInWorker(inputs, opts, decodeAs) {
+    const el = document.getElementById('fh-engine'); const src = el && el.textContent;
+    if (!src || typeof Worker === 'undefined') { const e = new Error('WORKER_UNSUPPORTED'); e.unsupported = true; throw e; }
+    let url, w;
+    try { const blob = new Blob([src + '\n' + WORKER_HARNESS], { type: 'text/javascript' }); url = URL.createObjectURL(blob); w = new Worker(url); }
+    catch (err) { const e = new Error('WORKER_UNSUPPORTED'); e.unsupported = true; throw e; }
+    return new Promise((resolve, reject) => {
+      const cleanup = () => { try { w.terminate(); } catch (e) { } try { URL.revokeObjectURL(url); } catch (e) { } };
+      w.onmessage = (ev) => { const m = ev.data; if (m.type === 'progress') { status(m.text, true); } else if (m.type === 'error') { cleanup(); reject(new Error(m.message)); } else if (m.type === 'done') { cleanup(); resolve(m.empty ? { empty: true } : m); } };
+      w.onerror = (ev) => { cleanup(); const e = new Error('WORKER_UNSUPPORTED'); e.unsupported = true; reject(e); };
+      w.postMessage({ files: inputs.map(i => ({ name: i.name, buf: i.buf })), opts, decodeAs });
+    });
+  }
+  async function analyzeInline(inputs) {
+    const multi = inputs.length > 1;
+    const parts = []; const warnings = []; const sources = [];
+    for (const inp of inputs) {
+      status('Reading ' + inp.name + '…', true); await sleep();
+      const cap = A.parseCapture(inp.buf);
+      const nn = cap.packets.length; const dec = new Array(nn); let bytes = 0;
+      for (let i = 0; i < nn; i++) { dec[i] = A.decodePacket(cap.packets[i], i); bytes += cap.packets[i].len; if ((i & 16383) === 16383) { status('Decoding ' + inp.name + '… ' + fmtN(i + 1) + ' / ' + fmtN(nn), true); await sleep(); } }
+      for (let i = 0; i < nn; i++) parts.push({ raw: cap.packets[i], dp: dec[i], file: inp.name });
+      for (const w of (cap.warnings || [])) warnings.push(inp.name + ': ' + w);
+      const sha256 = inp.buf ? await sha256Buf(inp.buf) : null;
+      sources.push({ name: inp.name, packets: nn, bytes, format: cap.format, start: nn ? dec[0].ts : 0, end: nn ? dec[nn - 1].ts : 0, sha256 });
+    }
+    if (!parts.length) { status('No packets were found in the selected file(s).'); return { empty: true }; }
+    if (multi) { status('Merging ' + fmtN(parts.length) + ' packets from ' + inputs.length + ' files…', true); await sleep(); parts.sort((a, b) => a.dp.ts - b.dp.ts); }
+    const rawPackets = new Array(parts.length), pkts = new Array(parts.length);
+    for (let i = 0; i < parts.length; i++) { parts[i].dp.n = i + 1; parts[i].dp.file = parts[i].file; rawPackets[i] = parts[i].raw; pkts[i] = parts[i].dp; }
+    const cap = { format: multi ? inputs.length + ' files merged' : sources[0].format, linktype: rawPackets.length ? rawPackets[0].linktype : 1, packets: rawPackets, warnings };
+    const name = multi ? (inputs.length + ' captures (' + (() => { const all = sources.map(s => s.name).join(', '); return all.length > 54 ? all.slice(0, 54) + '…' : all; })() + ')') : sources[0].name;
+    status('Looking for anomalies…', true); await sleep();
+    const result = A.analyze(pkts, cap, analyzeOpts());
+    return { pkts, cap, sources, name, result };
+  }
   async function analyzeInputs(inputs) {
     try {
-      A.setDecodeAs(parseDecodeAs(settings.decodeAsText));
+      const decodeAs = parseDecodeAs(settings.decodeAsText);
+      A.setDecodeAs(decodeAs); // keep the main-thread engine in sync for later re-decodes/exports
       const multi = inputs.length > 1;
-      const parts = []; const warnings = []; const sources = [];
-      for (const inp of inputs) {
-        status('Reading ' + inp.name + '…', true); await sleep();
-        const cap = A.parseCapture(inp.buf);
-        const nn = cap.packets.length; const dec = new Array(nn); let bytes = 0;
-        for (let i = 0; i < nn; i++) { dec[i] = A.decodePacket(cap.packets[i], i); bytes += cap.packets[i].len; if ((i & 16383) === 16383) { status('Decoding ' + inp.name + '… ' + fmtN(i + 1) + ' / ' + fmtN(nn), true); await sleep(); } }
-        for (let i = 0; i < nn; i++) parts.push({ raw: cap.packets[i], dp: dec[i], file: inp.name });
-        for (const w of (cap.warnings || [])) warnings.push(inp.name + ': ' + w);
-        const sha256 = inp.buf ? await sha256Buf(inp.buf) : null;
-        sources.push({ name: inp.name, packets: nn, bytes, format: cap.format, start: nn ? dec[0].ts : 0, end: nn ? dec[nn - 1].ts : 0, sha256 });
+      let out = null;
+      if (typeof Worker !== 'undefined') {
+        try { out = await runInWorker(inputs, analyzeOpts(), decodeAs); }
+        catch (e) { if (!e.unsupported) { status('Could not analyse: ' + (e.message || e)); console.error(e); return; } console.warn('Off-thread analysis unavailable; using main thread.', e); out = null; }
       }
-      if (!parts.length) { status('No packets were found in the selected file(s).'); return; }
-      if (multi) { status('Merging ' + fmtN(parts.length) + ' packets from ' + inputs.length + ' files…', true); await sleep(); parts.sort((a, b) => a.dp.ts - b.dp.ts); }
-      const rawPackets = new Array(parts.length), pkts = new Array(parts.length);
-      for (let i = 0; i < parts.length; i++) { parts[i].dp.n = i + 1; parts[i].dp.file = parts[i].file; rawPackets[i] = parts[i].raw; pkts[i] = parts[i].dp; }
-      const cap = { format: multi ? inputs.length + ' files merged' : sources[0].format, linktype: rawPackets.length ? rawPackets[0].linktype : 1, packets: rawPackets, warnings };
-      let name;
-      if (multi) { const all = sources.map(s => s.name).join(', '); name = inputs.length + ' captures (' + (all.length > 54 ? all.slice(0, 54) + '…' : all) + ')'; }
-      else name = sources[0].name;
-      status('Looking for anomalies…', true); await sleep();
-      const result = A.analyze(pkts, cap, analyzeOpts());
+      if (!out) out = await analyzeInline(inputs);
+      if (!out || out.empty) return;
+      const { pkts, cap, sources, name, result } = out;
       state = Object.assign(state, { name, capture: cap, pkts, result, sources, sevFilter: 'all', filter: '', shown: 0, sessFilter: '', sessShown: 0, iocTab: 'ips', win: null, fullResult: null, timeWin: null, tlZoom: null, brush: null, report: null, comments: new Map() });
       state.sevOf = new Map();
       const order = { high: 0, medium: 1, low: 2, info: 3 };
@@ -4056,6 +4084,29 @@ const FluxHunt = (function () {
   $('cbPalette').addEventListener('change', () => { settings.cbPalette = $('cbPalette').checked; saveSettings(); applyPalette(); if (!$('view-graph').hidden && graphState) { drawGraph(); drawDonut(); } if (!$("view-overview").hidden) { drawBrush(); drawTimeline(); drawIoGraph(); } });
   $('catToggles').addEventListener('change', e => { const cb = e.target.closest('input[data-cat]'); if (!cb) return; const c = cb.dataset.cat; settings.disabled = ALL_CATS.filter(x => { const el = $('catToggles').querySelector(`input[data-cat="${CSS.escape(x)}"]`); return el && !el.checked; }); saveSettings(); reanalyze('Applying detector settings…'); });
   let iocT; $('iocWatch').addEventListener('input', () => { settings.iocText = $('iocWatch').value; saveSettings(); clearTimeout(iocT); iocT = setTimeout(() => reanalyze('Matching watchlist…'), 600); });
+  const FEED_EXT = new Set(['exe', 'dll', 'pdf', 'txt', 'csv', 'json', 'xml', 'html', 'htm', 'php', 'js', 'png', 'jpg', 'jpeg', 'gif', 'zip', 'doc', 'docx', 'bin', 'cfg', 'log', 'md', 'sys', 'dat', 'tmp', 'yml', 'yaml']);
+  $('feedImport').addEventListener('click', () => $('feedFile').click());
+  $('feedFile').addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try {
+      let text = await f.text();
+      text = text.replace(/\[\.\]|\(dot\)|\{dot\}/gi, '.').replace(/\[:\]/g, ':').replace(/hxxp/gi, 'http');
+      const ips = new Set(), domains = new Set(), hashes = new Set();
+      for (const m of text.matchAll(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g)) { if (m[0].split('.').every(o => +o <= 255)) ips.add(m[0]); }
+      for (const m of text.matchAll(/\b[a-f0-9]{64}\b/gi)) hashes.add(m[0].toLowerCase());
+      for (const m of text.matchAll(/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b/gi)) { const d = m[0].toLowerCase().replace(/^www\./, ''); if (!/^\d+(\.\d+)*$/.test(d) && !FEED_EXT.has(d.split('.').pop())) domains.add(d); }
+      const cur = settings.iocText || '';
+      const existing = new Set(cur.split(/[\s,;]+/).map(s => s.trim().toLowerCase()).filter(Boolean));
+      const add = []; const pushUniq = v => { v = String(v).toLowerCase(); if (!existing.has(v)) { existing.add(v); add.push(v); } };
+      ips.forEach(pushUniq); domains.forEach(pushUniq); hashes.forEach(pushUniq);
+      if (!add.length) { $('feedMsg').textContent = 'No new indicators found in ' + f.name + ' (' + (ips.size + domains.size + hashes.size) + ' seen, all already present).'; e.target.value = ''; return; }
+      const newText = (cur.trim() ? cur.trim() + '\n' : '') + add.join('\n');
+      $('iocWatch').value = newText; settings.iocText = newText; saveSettings();
+      $('feedMsg').textContent = 'Imported ' + add.length + ' new indicator(s) from ' + f.name + ' (' + ips.size + ' IP, ' + domains.size + ' domain, ' + hashes.size + ' hash).';
+      if (state.result) reanalyze('Matching imported indicators…');
+    } catch (err) { $('feedMsg').textContent = 'Could not read that file: ' + (err.message || err); }
+    e.target.value = '';
+  });
   let alT; $('allowList').addEventListener('input', () => { settings.allowText = $('allowList').value; saveSettings(); clearTimeout(alT); alT = setTimeout(() => reanalyze('Applying allowlist…'), 600); });
   let daT; $('decodeAs').addEventListener('input', () => { settings.decodeAsText = $('decodeAs').value; saveSettings(); clearTimeout(daT); daT = setTimeout(() => { if (!state.capture) return; status('Re-decoding with decode-as…', true); setTimeout(() => { A.setDecodeAs(parseDecodeAs(settings.decodeAsText)); state.pkts = state.capture.packets.map((rp, i) => A.decodePacket(rp, i)); render._keep = true; state.result = A.analyze(state.pkts, state.capture, analyzeOpts()); state.sevFilter = 'all'; render(); status('Re-decoded with decode-as overrides.'); }, 0); }, 700); });
   $('lockSave').addEventListener('click', async () => { const p = $('lockPass').value; settings.lock = p ? await hashPass(p) : null; saveSettings(); toast(p ? 'Workspace lock set' : 'Workspace lock cleared'); closeSettings(); });

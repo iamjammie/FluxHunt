@@ -10,6 +10,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
+- **Off-thread parsing (Web Worker).** Parsing, decoding and analysis now run in a Web Worker built
+  from the inlined engine's own source, so the UI stays responsive (with live progress) while a
+  large capture is processed; it falls back to the main thread automatically where Workers are
+  unavailable. No duplicated code, no network — still one self-contained file.
+- **Offline threat-intel feed import.** Settings → Threat intelligence → *Import feed file* loads a
+  CSV / STIX / MISP / OpenIOC / plain-list feed, extracts IPs, domains and SHA-256 hashes (handling
+  defanged forms like `1[.]2[.]3[.]4` and `hxxp`), and merges them into the watchlist — entirely
+  locally, with no outbound lookups.
 - **Statistics panel** on Overview: a packet-length distribution (bucketed) and a DNS
   service-response-time table (per resolver: responses, average and max latency), scoped to the
   current window when windowed analysis is active.
@@ -146,8 +154,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Roadmap (not yet implemented)
 
-- **Web-Worker parsing** for large captures without blocking the UI (staged — needs a main-thread
-  data-flow refactor).
 - **TLS payload decryption** via `SSLKEYLOGFILE` (a large, separate crypto module).
 - **Server deployment** for live capture, real authentication/RBAC, live threat-intel lookups,
   SIEM push, and multi-gigabyte scale.
