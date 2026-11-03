@@ -31,6 +31,13 @@
   a{color:var(--flux); text-decoration:none} a:hover{text-decoration:underline}
   .wrap{max-width:1060px; margin:0 auto; padding:0 20px}
   .eyebrow{text-transform:uppercase; letter-spacing:.14em; font-size:12px; font-weight:700; color:var(--muted); margin:0 0 14px}
+  .brandrow{display:flex; align-items:center; gap:18px; margin:0 0 22px}
+  .brandrow .logo{width:104px; height:104px; border-radius:50%; flex:0 0 auto; box-shadow:0 4px 24px rgba(0,0,0,.45)}
+  .slogan{font-size:14px; font-weight:800; letter-spacing:.2em; text-transform:uppercase; margin-top:7px;
+    background:linear-gradient(90deg,var(--spectra),var(--flux)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; color:var(--flux)}
+  .foot-brand{display:flex; align-items:center; gap:12px}
+  .foot-brand img{width:40px; height:40px; border-radius:50%; flex:0 0 auto}
+  @media (max-width:560px){ .brandrow{flex-wrap:wrap; gap:12px} .brandrow .logo{width:84px; height:84px} }
 
   header.hero{position:relative; overflow:hidden; padding:64px 0 46px; border-bottom:1px solid var(--line);
     background:radial-gradient(640px 300px at 12% -10%, var(--sage-soft), transparent 60%),
@@ -101,7 +108,13 @@
 
 <header class="hero">
   <div class="wrap">
-    <p class="eyebrow">iamjammie · open-source security · Seek. Analyze. Neutralize.</p>
+    <div class="brandrow">
+      <img class="logo" src="assets/jammie-logo.png" width="104" height="104" alt="JAMMIE — Cyber Threat Hunter">
+      <div>
+        <p class="eyebrow" style="margin:0 0 2px">iamjammie · open-source security</p>
+        <div class="slogan">Intelligence. Hunting. Resilience.</div>
+      </div>
+    </div>
     <h1>Threat hunting — from the <span class="b">wire</span> to the <span class="c">box</span> to the <span class="a">playbook</span>.</h1>
     <p class="lede">Open-source, offline, MITRE&nbsp;ATT&amp;CK-mapped tooling and knowledge for threat hunters and
       incident responders — a network analyser, a host triage tool, a hunting knowledge hub, and a
@@ -266,7 +279,7 @@
 
 <footer>
   <div class="wrap foot-row">
-    <div><strong>iamjammie</strong> — threat-hunting tools, frameworks &amp; knowledge. MIT licensed.<br>Seek. Analyze. Neutralize.</div>
+    <div class="foot-brand"><img src="assets/jammie-logo-sm.png" width="40" height="40" alt="JAMMIE"><div><strong>iamjammie</strong> — threat-hunting tools, frameworks &amp; knowledge. MIT licensed.<br>Intelligence. Hunting. Resilience.</div></div>
     <nav class="foot-links">
       <a href="https://github.com/iamjammie/hunt-sage">Hunt-Sage</a>
       <a href="https://github.com/iamjammie/FluxHunt">FluxHunt</a>
