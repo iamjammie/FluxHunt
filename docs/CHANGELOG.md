@@ -32,10 +32,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   reconnaissance — plus the ATT&CK tactics observed, prioritised immediate actions, and a
   Wireshark-style network expert-info panel (retransmissions, zero windows, out-of-order, resets,
   RTT). Cards link straight to the relevant findings.
-- **Objects tab (export objects).** Files reconstructed from the captured traffic (cleartext HTTP
-  transfers) can now be downloaded individually or all at once as a ZIP with a CSV manifest;
-  executables and archives are flagged and gated behind a confirmation. The engine now retains the
-  carved bytes (up to 1 MB per object), not just the hash.
+- **Objects tab (export objects).** Files reconstructed from the captured traffic — **HTTP, FTP and
+  TFTP** transfers — can be downloaded individually or all at once as a ZIP with a CSV manifest;
+  executables and archives are flagged and gated behind a confirmation. The engine retains the
+  carved bytes (up to 1 MB per object), not just the hash. FTP-DATA is carved by correlating the
+  control channel's PASV/PORT and RETR/STOR; TFTP by reassembling its DATA blocks. (SMB object
+  export is not yet implemented.)
 - **Timeline analysis (brushable window).** The Overview tab has a packets-over-time strip you can
   drag to select a time window. **Filter packets** scopes the Packets tab to the window live;
   **Analyze window** re-runs every detector on only that slice, scoping findings, hosts, sessions,

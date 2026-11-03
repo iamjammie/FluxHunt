@@ -781,6 +781,9 @@ const FluxHunt = (function () {
     const tlsOld = new Map();          // key -> {src,dst,sni,ver,idx}
     const snmpCommunity = new Map();   // key -> {src,dst,community,version,count,idx}
     let carveBudget = 24 * 1024 * 1024; // global cap on bytes buffered for file carving
+    const ftpExpect = new Map();       // "ip:port" (PASV/PORT data endpoint) -> true
+    const ftpLastFile = new Map();     // server IP -> last RETR/STOR filename
+    const tftp = new Map();            // "clientIp:clientPort" -> { file, blocks:Map, src, dst }
     const SECRET_PATTERNS = [
       [/AKIA[0-9A-Z]{16}/, 'AWS access key ID'],
       [/-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/, 'private key'],
@@ -925,7 +928,7 @@ const FluxHunt = (function () {
           f.syn++; f.pkts++; f.bytes += p.len; pushCap(f.idx, p.n); if (p.ts < f.first) f.first = p.ts; f.last = p.ts;
           inc(st.dstPorts, 'tcp/' + t.dport);
           const existing = conns.get(p.src + ':' + t.sport + '>' + p.dst + ':' + t.dport + '/tcp');
-          if (!existing || p.ts - existing.last > 60) { const c = newConn(p.src, t.sport, p.dst, t.dport, 'tcp', p.ts); c.cPkts = 1; c.cBytes = p.len; pushCap(c.idx, p.n, 30); f.starts.push(p.ts); f.conns.push(c); tcpHealth(c, true, t, f6, p.ts); }
+          if (!existing || p.ts - existing.last > 60) { const c = newConn(p.src, t.sport, p.dst, t.dport, 'tcp', p.ts); c.cPkts = 1; c.cBytes = p.len; pushCap(c.idx, p.n, 30); f.starts.push(p.ts); f.conns.push(c); tcpHealth(c, true, t, f6, p.ts); if (ftpExpect.has(p.dst + ':' + t.dport)) { c.carveFtp = true; c.carveName = ftpLastFile.get(p.dst) || 'ftp-download'; } }
           else { pushCap(existing.idx, p.n, 30); tcpHealth(existing, true, t, f6, p.ts); } // SYN retransmit
         } else {
           if (f6 === 0x12) { const f = flow(p.dst, p.src, t.sport, 'tcp'); f.synack++; f.established = true; pushCap(f.idx, p.n); }
@@ -967,6 +970,8 @@ const FluxHunt = (function () {
               if (c.carve && carveBudget > 0 && c.rbytes < 1048576) { const take = Math.min(pl.length, 1048576 - c.rbytes, carveBudget); if (take > 0) { (c.rbuf || (c.rbuf = [])).push(pl.subarray(0, take)); c.rbytes += take; carveBudget -= take; } }
               if (!c.certDone && c.sbytes < 32768 && (c.sni || TLS_PORTS.has(c.dport)) && (c.sbuf || pl[0] === 0x16)) { const take = Math.min(pl.length, 32768 - c.sbytes); (c.sbuf || (c.sbuf = [])).push(pl.subarray(0, take)); c.sbytes += take; }
             }
+            // FTP-DATA: buffer the file-bearing bytes of a data connection (either direction)
+            if (c.carveFtp && t.payloadLen > 0 && carveBudget > 0 && c.rbytes < 1048576) { const pl = t.payload; const take = Math.min(pl.length, 1048576 - c.rbytes, carveBudget); if (take > 0) { (c.rbuf || (c.rbuf = [])).push(pl.subarray(0, take)); c.rbytes += take; carveBudget -= take; } }
             if (t.payloadLen > 0) scanTcpPayload(p, t, r.fromClient);
           }
           if (f6 === 0x00 || f6 === 0x29 || f6 === 0x03 || f6 === 0x06 || f6 === 0x01 || f6 === 0x2b) {
@@ -988,6 +993,16 @@ const FluxHunt = (function () {
           if (!TLS_PORTS.has(t.dport)) addOdd('TLS', p, t.dport);
         }
         if (p.app === 'SSH' && t.dport !== 22 && t.dport !== 2222 && p.info.startsWith('SSH-')) addOdd('SSH', p, t.dport);
+        // FTP control channel: learn the data endpoint (PASV/PORT) and the transferred filename (RETR/STOR)
+        if ((t.dport === 21 || t.sport === 21) && t.payloadLen > 0) {
+          const line = ascii(t.payload, 0, Math.min(t.payload.length, 200)); let m;
+          if (t.dport === 21) {
+            if (m = /^(RETR|STOR)\s+(.+?)\r?\n/i.exec(line)) ftpLastFile.set(p.dst, m[2].trim().split('/').pop());
+            else if (m = /^PORT\s+(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)/i.exec(line)) ftpExpect.set(m[1] + '.' + m[2] + '.' + m[3] + '.' + m[4] + ':' + ((+m[5]) * 256 + (+m[6])), true);
+          } else if (m = /^227 [^(]*\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)/.exec(line)) {
+            ftpExpect.set(m[1] + '.' + m[2] + '.' + m[3] + '.' + m[4] + ':' + ((+m[5]) * 256 + (+m[6])), true);
+          }
+        }
         if (p.cred) addCred(p.cred.proto, p, p.cred.user, t.dport);
         // Kerberos (TCP 88)
         if (t.dport === 88 || t.sport === 88) scanKerberos(p, t.payload, t.dport === 88, true);
@@ -1006,6 +1021,18 @@ const FluxHunt = (function () {
         touchConn(r, p, u.payloadLen);
         { const f = flow(r.c.src, r.c.dst, r.c.dport, 'udp'); f.pkts++; f.bytes += p.len; f.last = p.ts; pushCap(f.idx, p.n); }
         if (u.dport === 88 || u.sport === 88) scanKerberos(p, u.payload, u.dport === 88, false);
+        // TFTP (UDP 69): RRQ names the file, DATA blocks (opcode 3) carry it in 512-byte chunks
+        if ((u.dport === 69 || u.sport === 69) && u.payloadLen >= 4) {
+          const pl = u.payload; const op = (pl[0] << 8) | pl[1];
+          if (op === 1 && u.dport === 69) { // RRQ from client
+            let i = 2, name = ''; while (i < pl.length && pl[i]) name += String.fromCharCode(pl[i++]);
+            tftp.set(p.src + ':' + u.sport, { file: (name.split('/').pop() || 'tftp-file'), blocks: new Map(), src: p.src, dst: p.dst });
+          } else if (op === 3) { // DATA to client
+            const block = (pl[2] << 8) | pl[3]; const key = (u.dport === 69 ? p.src + ':' + u.sport : p.dst + ':' + u.dport);
+            const tf = tftp.get(key) || tftp.get(p.dst + ':' + u.dport);
+            if (tf && tf.blocks.size < 4096) tf.blocks.set(block, pl.subarray(4));
+          }
+        }
         if ((u.dport === 67 || u.dport === 68 || u.sport === 67 || u.sport === 68) && u.payload) { scanDhcp(p, u.payload); if (u.sport === 67) inc(dhcpServers, p.src); }
         if ((u.dport === 161 || u.dport === 162 || u.sport === 161) && u.payload) scanSnmp(p, u.payload, u.dport === 161 || u.dport === 162);
       }
@@ -1145,10 +1172,25 @@ const FluxHunt = (function () {
           if (/text|json|xml|javascript|form|html|^$/.test(ctype) || hdrEnd < 0) scanSecrets(ascii(body, 0, Math.min(body.length, 8192)), c.dst, c.src, 'HTTP body', (c.idx[0] || 0));
         }
       }
+      // FTP-DATA: the buffered bytes are the raw file
+      if (c.carveFtp && c.rbuf && c.rbytes > 0) {
+        const body = joinChunks(c.rbuf, c.rbytes); c.rbuf = null;
+        if (body.length >= 8) { const magic = magicType(body); const data = body.length > 1048576 ? body.subarray(0, 1048576) : body;
+          objects.push({ src: c.src, dst: c.dst, dport: c.dport, host: c.dst, path: c.carveName || 'ftp-data', method: 'FTP', ctype: '', declaredLen: -1, bytes: body.length, partial: false, sha256: sha256hex(data), magic, idx: c.idx.slice(0, 8), data }); }
+      }
       // inbound / reverse sessions: external client connecting in to an internal host on a non-service port
       if (c.proto === 'tcp' && !isPrivate(c.src) && isPrivate(c.dst) && !c.implicit && (c.sBytes + c.cBytes) > 0 && !SERVICE_PORTS.has(c.dport)) {
         const k = c.dst + ':' + c.dport; let g = inboundSrv.get(k); if (!g) { g = { ip: c.dst, port: c.dport, ext: new Set(), bytes: 0, idx: [] }; inboundSrv.set(k, g); } g.ext.add(c.src); g.bytes += c.sBytes + c.cBytes; for (const i of c.idx) pushCap(g.idx, i, 20);
       }
+    }
+    // TFTP: reassemble DATA blocks in order into the transferred file
+    for (const tf of tftp.values()) {
+      if (!tf.blocks.size) continue;
+      const nums = [...tf.blocks.keys()].sort((a, b) => a - b); let total = 0; for (const n of nums) total += tf.blocks.get(n).length;
+      if (total < 1) continue; const body = new Uint8Array(Math.min(total, 1048576)); let o = 0;
+      for (const n of nums) { const d = tf.blocks.get(n); const take = Math.min(d.length, body.length - o); if (take <= 0) break; body.set(d.subarray(0, take), o); o += take; }
+      const magic = magicType(body);
+      objects.push({ src: tf.src, dst: tf.dst, dport: 69, host: tf.dst, path: tf.file, method: 'TFTP', ctype: '', declaredLen: -1, bytes: o, partial: false, sha256: sha256hex(body.subarray(0, o)), magic, idx: [], data: body.subarray(0, o) });
     }
     if (objects.length > 400) objects.length = 400;
 
@@ -1724,6 +1766,24 @@ const FluxHunt = (function () {
     // --- cleartext credentials
     { const s = sport('10.0.0.12'); const seq = 77; const ts = t + 330; ev(ts, ipFrame('10.0.0.12', '10.0.0.5', 6, tcp(s, 80, 0x02, seq, 0))); ev(ts + 0.01, ipFrame('10.0.0.5', '10.0.0.12', 6, tcp(80, s, 0x12, 1, seq + 1))); ev(ts + 0.02, ipFrame('10.0.0.12', '10.0.0.5', 6, tcp(s, 80, 0x18, seq + 1, 2, str('GET /admin/ HTTP/1.1\r\nHost: intranet.corp.local\r\nUser-Agent: Mozilla/5.0\r\nAuthorization: Basic amFuZTpTdW1tZXIyMDI2IQ==\r\n\r\n')))); ev(ts + 0.04, ipFrame('10.0.0.5', '10.0.0.12', 6, tcp(80, s, 0x18, 2, seq + 120, str('HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 12\r\n\r\n<html></html>')))); }
     { const s = sport('10.0.0.13'); const seq = 88; const ts = t + 400; ev(ts, ipFrame('10.0.0.13', '10.0.0.5', 6, tcp(s, 21, 0x02, seq, 0))); ev(ts + 0.01, ipFrame('10.0.0.5', '10.0.0.13', 6, tcp(21, s, 0x12, 1, seq + 1))); ev(ts + 0.02, ipFrame('10.0.0.5', '10.0.0.13', 6, tcp(21, s, 0x18, 1, seq + 1, str('220 FTP server ready\r\n')))); ev(ts + 0.5, ipFrame('10.0.0.13', '10.0.0.5', 6, tcp(s, 21, 0x18, seq + 1, 22, str('USER backupadmin\r\n')))); ev(ts + 0.55, ipFrame('10.0.0.5', '10.0.0.13', 6, tcp(21, s, 0x18, 22, seq + 18, str('331 Password required\r\n')))); ev(ts + 1.2, ipFrame('10.0.0.13', '10.0.0.5', 6, tcp(s, 21, 0x18, seq + 18, 45, str('PASS hunter2\r\n')))); ev(ts + 1.25, ipFrame('10.0.0.5', '10.0.0.13', 6, tcp(21, s, 0x18, 45, seq + 31, str('230 Login successful\r\n')))); }
+
+    // --- FTP passive-mode document download (carved as an exported object)
+    { const cli = '10.0.0.13', srv = '10.0.0.5'; const cs = sport(cli); let ts = t + 402; let cseq = 7000, sseq = 9000;
+      ev(ts, ipFrame(cli, srv, 6, tcp(cs, 21, 0x02, cseq, 0))); ev(ts += 0.01, ipFrame(srv, cli, 6, tcp(21, cs, 0x12, 1, cseq + 1))); cseq++; ev(ts += 0.005, ipFrame(cli, srv, 6, tcp(cs, 21, 0x10, cseq, 1)));
+      const retr = str('RETR q3-forecast.pdf\r\n'); ev(ts += 0.1, ipFrame(cli, srv, 6, tcp(cs, 21, 0x18, cseq, sseq, retr))); cseq += retr.length;
+      const dport = 50210; const pasv = str('227 Entering Passive Mode (10,0,0,5,' + (dport >> 8) + ',' + (dport & 255) + ')\r\n');
+      ev(ts += 0.02, ipFrame(srv, cli, 6, tcp(21, cs, 0x18, sseq, cseq, pasv))); sseq += pasv.length;
+      const ds = sport(cli); ev(ts += 0.03, ipFrame(cli, srv, 6, tcp(ds, dport, 0x02, 10, 0))); ev(ts += 0.01, ipFrame(srv, cli, 6, tcp(dport, ds, 0x12, 1, 11))); ev(ts += 0.005, ipFrame(cli, srv, 6, tcp(ds, dport, 0x10, 11, 1)));
+      const pdf = cat(str('%PDF-1.5\n'), new Uint8Array(1100).map(() => 32 + Math.floor(Math.random() * 90)), str('\n%%EOF\n'));
+      ev(ts += 0.02, ipFrame(srv, cli, 6, tcp(dport, ds, 0x18, 1, 11, pdf.subarray(0, 600)))); ev(ts += 0.02, ipFrame(srv, cli, 6, tcp(dport, ds, 0x18, 601, 11, pdf.subarray(600))));
+      ev(ts += 0.02, ipFrame(srv, cli, 6, tcp(dport, ds, 0x11, 1 + pdf.length, 11))); ev(ts += 0.01, ipFrame(cli, srv, 6, tcp(ds, dport, 0x10, 11, 1 + pdf.length)));
+      ev(ts += 0.02, ipFrame(srv, cli, 6, tcp(21, cs, 0x18, sseq, cseq, str('226 Transfer complete\r\n')))); }
+
+    // --- TFTP device-config download (carved as an exported object)
+    { const cli = '10.0.0.24', srv = '10.0.0.9'; const cs = sport(cli); let ts = t + 408;
+      const rrq = cat(be16(1), str('startup-config.cfg'), new Uint8Array([0]), str('octet'), new Uint8Array([0])); ev(ts, ipFrame(cli, srv, 17, udp(cs, 69, rrq)));
+      const cfg = str('hostname edge-rtr-01\n!\ninterface Gig0/0\n ip address 10.0.0.9 255.255.255.0\n!\nsnmp-server community public RO\nusername admin privilege 15 secret 0 R0uterP@ss\nend\n');
+      let blk = 1, off = 0; while (off < cfg.length) { const chunk = cfg.subarray(off, off + 512); ev(ts += 0.02, ipFrame(srv, cli, 17, udp(69, cs, cat(be16(3), be16(blk), chunk)))); ev(ts += 0.005, ipFrame(cli, srv, 17, udp(cs, 69, cat(be16(4), be16(blk))))); blk++; off += 512; } }
 
     // --- ICMP tunnel from 10.0.0.77
     for (let i = 0; i < 9; i++) { const ts = t + 420 + i * 3; const d = new Uint8Array(900).map(() => Math.floor(Math.random() * 256)); ev(ts, ipFrame('10.0.0.77', '8.8.8.8', 1, icmp(8, 0, 31, i, d))); ev(ts + 0.04, ipFrame('8.8.8.8', '10.0.0.77', 1, icmp(0, 0, 31, i, d), 113)); }
