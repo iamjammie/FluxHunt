@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hunt Suite — FluxHunt + HostHunt</title>
+<meta name="description" content="Two offline, ATT&CK-mapped threat-hunting tools for incident response: FluxHunt hunts on the wire (PCAP analysis in the browser), HostHunt hunts on the box (host and endpoint artefacts). One on the wire, one on the box.">
+<style>
+  :root{
+    --bg:#0e1418; --surface:#151c22; --surface-2:#1a232a; --line:#2b3741;
+    --fg:#e3e9ee; --muted:#8e9ca9; --flux:#2fd0bf; --flux-fg:#06201d; --flux-soft:#123a37;
+    --host:#e8a53f; --host-fg:#2a1c05; --host-soft:#3a2b12; --radius:14px;
+    color-scheme:dark;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg:#eef1f4; --surface:#ffffff; --surface-2:#f5f8fa; --line:#cdd5dd;
+      --fg:#161e26; --muted:#5a6977; --flux:#0b6e66; --flux-fg:#ffffff; --flux-soft:#d5ebe8;
+      --host:#a8650a; --host-fg:#ffffff; --host-soft:#f5e6cb;
+      color-scheme:light;
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased;}
+  a{color:var(--flux); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1020px; margin:0 auto; padding:0 20px}
+
+  header.hero{position:relative; overflow:hidden; padding:66px 0 48px; border-bottom:1px solid var(--line);
+    background:radial-gradient(760px 320px at 20% -10%, var(--flux-soft), transparent 60%),
+              radial-gradient(760px 320px at 82% -10%, var(--host-soft), transparent 60%),
+              linear-gradient(180deg, var(--surface), var(--bg));}
+  .eyebrow{text-transform:uppercase; letter-spacing:.14em; font-size:12px; font-weight:700; color:var(--muted); margin:0 0 14px}
+  h1{font-size:clamp(28px,5vw,44px); line-height:1.08; letter-spacing:-.5px; margin:0 0 .35em; max-width:20ch}
+  h1 .f{color:var(--flux)} h1 .h{color:var(--host)}
+  .lede{font-size:clamp(16px,2.4vw,19px); color:var(--muted); max-width:64ch; margin:0 0 26px}
+  .cta{display:flex; flex-wrap:wrap; gap:12px}
+  .btn{display:inline-flex; align-items:center; gap:9px; padding:11px 18px; border-radius:11px; font-weight:650; font-size:15px; border:1px solid var(--line); background:transparent; color:var(--fg); cursor:pointer; transition:transform .06s ease}
+  .btn:hover{text-decoration:none; transform:translateY(-1px)}
+  .btn.flux{background:var(--flux); color:var(--flux-fg); border-color:var(--flux)}
+  .btn.host{background:var(--host); color:var(--host-fg); border-color:var(--host)}
+
+  section{padding:50px 0}
+  h2{font-size:clamp(21px,3vw,27px); margin:0 0 6px; letter-spacing:-.3px}
+  .sub{color:var(--muted); margin:0 0 28px; max-width:62ch}
+
+  .tools{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  .tool{background:var(--surface); border:1px solid var(--line); border-top-width:4px; border-radius:var(--radius); padding:24px 22px; display:flex; flex-direction:column}
+  .tool.flux{border-top-color:var(--flux)}
+  .tool.host{border-top-color:var(--host)}
+  .tool .badge{display:inline-flex; align-items:center; gap:8px; font-size:12px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin-bottom:12px}
+  .tool .dot{width:10px; height:10px; border-radius:50%}
+  .tool.flux .dot{background:var(--flux)} .tool.host .dot{background:var(--host)}
+  .tool h3{font-size:24px; margin:0 0 2px; letter-spacing:-.3px}
+  .tool .tag{color:var(--muted); font-size:14px; margin:0 0 14px}
+  .tool p{font-size:14.5px; color:var(--fg); margin:0 0 14px}
+  .tool .meta{font-size:12.5px; color:var(--muted); margin:0 0 16px; display:grid; gap:4px}
+  .tool .meta b{color:var(--fg); font-weight:600}
+  .tool ul{margin:0 0 18px; padding-left:18px; color:var(--muted); font-size:13.5px; display:grid; gap:5px}
+  .tool ul b{color:var(--fg); font-weight:600}
+  .tool .links{margin-top:auto; display:flex; flex-wrap:wrap; gap:9px}
+  .tool .links a{font-size:13.5px; font-weight:600; padding:8px 13px; border-radius:9px; border:1px solid var(--line)}
+  .tool.flux .links a.primary{background:var(--flux); color:var(--flux-fg); border-color:var(--flux)}
+  .tool.host .links a.primary{background:var(--host); color:var(--host-fg); border-color:var(--host)}
+  .tool .links a:hover{text-decoration:none; border-color:var(--muted)}
+
+  .combo{background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--line); border-radius:18px; padding:28px 26px}
+  .combo .eyebrow{color:var(--muted)}
+  .steps{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-top:20px}
+  .step{display:grid; gap:6px}
+  .step .n{width:28px; height:28px; border-radius:8px; display:grid; place-items:center; font-weight:800; font-size:13px}
+  .step:nth-child(1) .n{background:var(--host-soft); color:var(--host)}
+  .step:nth-child(2) .n{background:var(--flux-soft); color:var(--flux)}
+  .step:nth-child(3) .n{background:var(--host-soft); color:var(--host)}
+  .step:nth-child(4) .n{background:var(--flux-soft); color:var(--flux)}
+  .step h4{margin:0; font-size:14.5px}
+  .step p{margin:0; color:var(--muted); font-size:13px}
+
+  .principles{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px}
+  .pr{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:16px 18px}
+  .pr h4{margin:0 0 4px; font-size:14.5px}
+  .pr p{margin:0; color:var(--muted); font-size:13px}
+
+  footer{border-top:1px solid var(--line); padding:28px 0 48px; color:var(--muted); font-size:14px}
+  .foot-row{display:flex; flex-wrap:wrap; gap:14px 24px; align-items:center; justify-content:space-between}
+  .foot-links{display:flex; flex-wrap:wrap; gap:16px}
+  .note{font-size:13px; color:var(--muted); background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--host); border-radius:10px; padding:14px 16px; margin-top:26px; max-width:74ch}
+
+  @media (max-width:720px){ .tools{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">The Hunt suite · offline threat hunting for IR</p>
+    <h1><span class="f">FluxHunt</span> hunts the wire. <span class="h">HostHunt</span> hunts the box.</h1>
+    <p class="lede">Two companion, open-source incident-response tools that turn raw evidence into
+      MITRE&nbsp;ATT&amp;CK-mapped findings — one from network captures, one from host artefacts. Both run
+      offline with no dependencies, so they're safe for sensitive and air-gapped work.</p>
+    <div class="cta">
+      <a class="btn flux" href="https://github.com/iamjammie/FluxHunt">FluxHunt →</a>
+      <a class="btn host" href="https://github.com/iamjammie/HostHunt">HostHunt →</a>
+      <a class="btn" href="https://iamjammie.github.io/FluxHunt/">Try the live FluxHunt demo</a>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="tools">
+      <div class="tool flux">
+        <span class="badge"><span class="dot"></span>On the wire · PCAP</span>
+        <h3>FluxHunt</h3>
+        <p class="tag">Hunting threats through traffic patterns.</p>
+        <p>A single-file, fully offline web app that loads <code>.pcap</code> / <code>.pcapng</code> captures and
+           turns them into findings, carved artifacts, IOCs, a visual attack map, and an IR report — entirely
+           in the browser, with zero network calls.</p>
+        <div class="meta"><span><b>Runtime:</b> any modern browser</span><span><b>Install:</b> none — one HTML file</span><span><b>Network calls:</b> zero</span></div>
+        <ul>
+          <li><b>35+ detectors</b> across the kill chain, each ATT&amp;CK-mapped</li>
+          <li><b>Expert (IR/CISO) briefing</b>, attack map, kill-chain timeline</li>
+          <li><b>Object export</b> (HTTP/FTP/TFTP), flow &amp; stream graphs, stats</li>
+          <li>Exports: STIX, MISP, Suricata, YARA, Sigma, Zeek, ATT&amp;CK Navigator…</li>
+        </ul>
+        <div class="links">
+          <a class="primary" href="https://iamjammie.github.io/FluxHunt/">Live demo</a>
+          <a href="https://github.com/iamjammie/FluxHunt">Source</a>
+          <a href="https://github.com/iamjammie/FluxHunt/tree/main/docs">Docs</a>
+          <a href="https://github.com/iamjammie/FluxHunt/releases/latest">Download</a>
+        </div>
+      </div>
+
+      <div class="tool host">
+        <span class="badge"><span class="dot"></span>On the box · endpoint</span>
+        <h3>HostHunt</h3>
+        <p class="tag">Hunting threats through host and endpoint artefacts.</p>
+        <p>A dependency-free Python triage tool that collects host artefacts live on Windows and Linux —
+           processes, services, tasks, autostart, connections, accounts, event logs, persistence — and runs
+           them through an ATT&amp;CK-mapped engine, IOC sweep, cross-host stacking and a unified timeline.</p>
+        <div class="meta"><span><b>Runtime:</b> Python 3.8+</span><span><b>Install:</b> none — standard library only</span><span><b>Deploy:</b> USB / EDR shell, air-gap-friendly</span></div>
+        <ul>
+          <li><b>43 detection rules</b> across the kill chain, each ATT&amp;CK-mapped</li>
+          <li><b>Live collectors</b> for Windows (PowerShell/built-ins) &amp; Linux (<code>/proc</code>)</li>
+          <li><b>Fleet stacking</b> &amp; unified timeline; ingests KAPE/Autoruns/wevtutil output</li>
+          <li>Reports: self-contained HTML, JSON (SIEM), Markdown (case file)</li>
+        </ul>
+        <div class="links">
+          <a class="primary" href="https://github.com/iamjammie/HostHunt">Source</a>
+          <a href="https://github.com/iamjammie/HostHunt#quick-start">Quick start</a>
+          <a href="https://github.com/iamjammie/HostHunt#what-it-collects">What it collects</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="combo">
+      <p class="eyebrow">Better together</p>
+      <h2>Network evidence and host evidence, correlated</h2>
+      <p class="sub">An incident rarely lives in one place. Run both and line up what the wire shows against
+        what the box shows — the same ATT&amp;CK technique seen from two angles is a confirmed lead, not a guess.</p>
+      <div class="steps">
+        <div class="step"><div class="n">1</div><h4>Collect the host</h4><p>Drop HostHunt on the suspect endpoint — a point-in-time artefact bundle, no agent.</p></div>
+        <div class="step"><div class="n">2</div><h4>Analyse the capture</h4><p>Load the PCAP into FluxHunt — beaconing, exfil, lateral movement, carved files.</p></div>
+        <div class="step"><div class="n">3</div><h4>Pivot on IOCs</h4><p>Feed FluxHunt's indicators (IPs, domains, hashes) into HostHunt's IOC sweep, and vice-versa.</p></div>
+        <div class="step"><div class="n">4</div><h4>One ATT&amp;CK story</h4><p>Both map to MITRE ATT&amp;CK, so host and network findings slot into a single kill-chain narrative.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <p class="eyebrow">Shared principles</p>
+    <h2>Built the same way</h2>
+    <p class="sub">Both tools are deliberately small, auditable, and self-contained — the qualities that make
+      them usable on sensitive evidence and locked-down hosts.</p>
+    <div class="principles">
+      <div class="pr"><h4>Offline &amp; air-gap-friendly</h4><p>No uploads, no live calls. Evidence stays on the machine it's examined on.</p></div>
+      <div class="pr"><h4>No dependencies</h4><p>FluxHunt is one HTML file; HostHunt is pure Python standard library.</p></div>
+      <div class="pr"><h4>ATT&amp;CK-mapped</h4><p>Every finding carries a MITRE ATT&amp;CK technique for triage and reporting.</p></div>
+      <div class="pr"><h4>Defensive &amp; MIT-licensed</h4><p>Read-only analysis tools for responders — open source, free to audit and extend.</p></div>
+    </div>
+    <p class="note"><b>Use responsibly.</b> Both tools are defensive and heuristic: findings are demonstrated on
+      synthetic data and can flag legitimate software. Validate against known-good baselines, and run them only
+      on captures and hosts you are authorised to investigate.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-row">
+    <div><strong>The Hunt suite</strong> — FluxHunt + HostHunt. MIT licensed.<br>Offline, ATT&amp;CK-mapped threat hunting for incident response.</div>
+    <nav class="foot-links">
+      <a href="https://github.com/iamjammie/FluxHunt">FluxHunt</a>
+      <a href="https://github.com/iamjammie/HostHunt">HostHunt</a>
+      <a href="https://iamjammie.github.io/FluxHunt/">FluxHunt demo</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

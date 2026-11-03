@@ -23,6 +23,11 @@ The whole tool is one HTML file. Save `FluxHunt.html`, double-click it, and work
 server, no internet connection. That makes it safe for sensitive evidence and usable in air-gapped
 environments.
 
+> **Part of the Hunt suite.** FluxHunt hunts on the wire; its companion
+> **[HostHunt](https://github.com/iamjammie/HostHunt)** hunts on the box (host & endpoint artefacts).
+> Both are offline and ATT&CK-mapped — see the **[suite overview](https://iamjammie.github.io/FluxHunt/suite.html)**
+> for how they work together.
+
 ## What it does
 
 - **Analyses malware traffic.** 35+ detectors across the intrusion kill-chain: reconnaissance,
