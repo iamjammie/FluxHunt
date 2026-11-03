@@ -1,6 +1,6 @@
 # FluxHunt — Detection Reference
 
-Every detector in FluxHunt (version 2.1): what triggers it, its default severity, the MITRE ATT&CK
+Every detector in FluxHunt (version 2.2): what triggers it, its default severity, the MITRE ATT&CK
 technique it maps to, and guidance on false positives. Thresholds shown are for **Normal**
 sensitivity; **High** roughly halves them and **Low** roughly doubles them. All detectors can be
 toggled off in **⚙ Settings → Detection**.

@@ -7,7 +7,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## Unreleased
+## 2.2 — Analyst workflow, visual depth, and off-thread parsing
 
 ### Added
 - **Off-thread parsing (Web Worker).** Parsing, decoding and analysis now run in a Web Worker built

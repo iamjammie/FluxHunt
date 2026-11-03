@@ -6,7 +6,7 @@
 
 A single-file, fully offline PCAP threat-hunting and incident-response workbench.
 
-`Version 2.1` · Runtime: any modern browser · Dependencies: **none** · Network calls: **zero**
+`Version 2.2` · Runtime: any modern browser · Dependencies: **none** · Network calls: **zero**
 
 **[▶ Launch the live demo](https://iamjammie.github.io/FluxHunt/)** · [Documentation](docs/) · [Download `FluxHunt.html`](https://github.com/iamjammie/FluxHunt/releases/latest)
 
@@ -28,15 +28,25 @@ environments.
 - **Analyses malware traffic.** 35+ detectors across the intrusion kill-chain: reconnaissance,
   C2/beaconing, lateral movement, credential theft, exfiltration, covert channels, and more — each
   mapped to MITRE ATT&CK.
-- **Extracts artifacts.** Carves transferred files (with SHA-256), TLS certificates, captured
-  credentials, JA3/JA4/JA3S fingerprints, and an asset inventory out of the capture.
-- **Visualises the attack.** A force-directed network/attack map, a reconstructed kill-chain, a
-  throughput graph, a protocol hierarchy, and expert-info / TCP-health panels.
+- **Answers the first IR/CISO questions at a glance.** An **Expert** tab gives an overall risk
+  verdict and colour-coded answer cards — confirmed incident, affected hosts, external
+  infrastructure, credentials exposed, data exfiltration, malware delivered, C2/beaconing, lateral
+  movement, reconnaissance — plus ATT&CK tactics, prioritised actions, and Wireshark-style network
+  expert info.
+- **Extracts and exports objects.** Carves transferred files over **HTTP, FTP and TFTP** (downloadable,
+  SHA-256 hashed), plus TLS certificates, captured credentials, JA3/JA4/JA3S fingerprints, and an
+  asset inventory.
+- **Visualises the attack.** A force-directed network/attack map (labelled, with direction arrows),
+  a horizontal kill-chain timeline, a findings breakdown, throughput and packet-length statistics,
+  a protocol hierarchy, and — per conversation — a **flow-sequence ladder** and **TCP stream graphs**
+  (sequence/Stevens, window, RTT).
+- **Scopes to a time window.** Brush the Overview timeline to filter — or **re-analyse** — just a
+  slice of the capture.
 - **Generates IR reports.** Executive summary, probable attack narrative, timeline, affected-asset
   breakdown, ATT&CK coverage, IOC appendix, and chain-of-custody — exportable to PDF, HTML,
   Markdown, STIX, MISP, Zeek, Suricata, YARA, Sigma, OpenIOC, CEF, and ATT&CK Navigator.
-- **Follows streams.** Reassembles any TCP conversation by sequence number into a readable
-  client/server transcript.
+- **Stays responsive.** Parsing, decoding and analysis run **off the main thread in a Web Worker**,
+  so the UI never freezes on a large capture — still one self-contained file.
 
 ## Quick start
 
@@ -85,9 +95,12 @@ See the [**User Guide**](docs/USER_GUIDE.md) for a full walkthrough.
 - **Approximate enrichment.** IP "region" is the responsible RIR from IANA allocations, not
   geolocation; "network owner" is matched against a small built-in list. ATT&CK IDs are a
   best-effort mapping, not attribution.
-- **Not included (needs a backend):** live capture, real multi-user authentication / RBAC, live
-  threat-intelligence feed lookups, multi-gigabyte scale, continuous monitoring, and Web-Worker
-  off-thread parsing.
+- **Threat intel is offline.** You can **import** a feed file (CSV / STIX / MISP / OpenIOC / list)
+  into the watchlist, but there are no *live* lookups — that would require outbound calls and break
+  the zero-network guarantee.
+- **Not included (needs a backend):** live packet capture, continuous monitoring, real multi-user
+  authentication / RBAC, live threat-intelligence lookups, and multi-gigabyte scale. These are the
+  "server deployment" tier; the browser has no raw-socket access and a tab is memory-bound.
 
 ## Responsible use
 

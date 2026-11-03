@@ -1,6 +1,6 @@
 # FluxHunt — Feature Catalogue
 
-A complete list of what FluxHunt can do (version 2.1). For how to use each feature see
+A complete list of what FluxHunt can do (version 2.2). For how to use each feature see
 [USER_GUIDE.md](USER_GUIDE.md); for detector specifics see
 [DETECTION_REFERENCE.md](DETECTION_REFERENCE.md).
 
@@ -61,10 +61,20 @@ A complete list of what FluxHunt can do (version 2.1). For how to use each featu
 Each finding carries a severity, evidence table, remediation advice, first/last timestamp, the
 hosts involved, referenced packets, and a **MITRE ATT&CK** technique.
 
-## Artifact & IOC extraction
+## Incident briefing (Expert tab)
 
-- **Files** — carved from HTTP responses, typed by magic bytes, hashed (SHA-256), with content-type
-  mismatch detection.
+- **Risk verdict** (Critical / High / Elevated / Low / Clean) with the headline.
+- **Answer cards** for the first IR/CISO questions — confirmed incident, affected internal hosts,
+  external infrastructure, credentials exposed, data exfiltration, malware delivered, active
+  C2/beaconing, lateral movement, reconnaissance — each clickable to its findings.
+- **ATT&CK tactics observed**, **prioritised immediate actions**, and a Wireshark-style **network
+  expert-info** panel (retransmissions, zero-window, out-of-order, duplicate ACKs, resets, RTT).
+
+## Artifact & object extraction
+
+- **Exported objects** — files carved from cleartext **HTTP, FTP and TFTP** transfers, typed by magic
+  bytes, hashed (SHA-256), **downloadable** individually or as a ZIP with a CSV manifest;
+  executables/archives flagged; content-type vs magic mismatch detection.
 - **TLS certificates** — subject/issuer CN, validity, SHA-1 thumbprint, self-signed flag.
 - **Fingerprints** — JA3 and JA4 (client), JA3S (server).
 - **Credentials** — Net-NTLMv2, cleartext logins, SNMP community strings.
@@ -75,13 +85,17 @@ hosts involved, referenced packets, and a **MITRE ATT&CK** technique.
 
 ## Visualisation
 
-- **Network / attack map** — force-directed graph, role-coloured, malicious edges highlighted,
-  draggable, zoomable, with PNG export.
-- **Attack chain** — reconstructed kill-chain in phase order.
-- **Findings donut** by category.
-- **Timeline** (packets/s) and **throughput** (bytes/s) charts.
-- **Protocol hierarchy** tree.
-- **Expert info / TCP health** panel (retransmissions, OOO, dup-ACKs, zero-window, resets, RTT).
+- **Network / attack map** — force-directed graph with on-canvas host labels, role colouring,
+  node size by volume, a high-severity ring; edges weighted by bytes with a **direction arrow**;
+  hover isolation; Fit / Freeze / Labels controls; clickable legend roles; a stats/validation bar
+  (shown/total hosts, links, flagged, C2, truncation); a mapped-hosts table; PNG export.
+- **Attack chain** — a horizontal **progressive kill-chain timeline** with hover detail and
+  click-to-filter.
+- **Findings by category** — donut plus ranked, clickable per-category bars and a severity chip row.
+- **Timeline analysis** — brushable packets-over-time strip to filter or **re-analyse** a time window.
+- **Statistics** — packet-length distribution and DNS **service response time** (per resolver).
+- **Flow sequence graph** and **TCP stream graphs** (sequence/Stevens, window, RTT) per conversation.
+- **Throughput** (bytes/s) chart, **protocol hierarchy** tree, **expert info / TCP health** panel.
 - Protocol/port breakdowns, top talkers, conversations, DNS domains, SNI.
 - **Colourblind-safe (Okabe-Ito) palette** option; light/dark/system theming; compact density.
 
@@ -98,9 +112,13 @@ hosts involved, referenced packets, and a **MITRE ATT&CK** technique.
 
 ## Follow Stream & packet analysis
 
-- **Follow Stream** — TCP reassembly by sequence number into a colour-coded client/server
-  transcript, with a hex view.
-- **Packet list** — filter DSL, full per-packet decode, hex dump, ATT&CK tags on involved packets.
+- **Follow Stream** — three tabs: **Conversation** (TCP reassembly into a colour-coded client/server
+  transcript, with hex), **Flow graph** (Wireshark-style vertical segment ladder), and **Stream
+  graphs** (sequence/Stevens, window, RTT).
+- **Packet list** — a rich filter grammar (`ip: src: dst: port:(N or LO-HI) proto: n: after: before:
+  contains: matches:(regex)` with `&&` / `||` / `!`), full per-packet decode, hex dump, ATT&CK tags.
+- **Analyst comments** per packet, exported in the case package (`packet-notes.csv`).
+- **Custom colouring rules** — filter → colour highlights in the packet list.
 
 ## Exports & interoperability
 
@@ -116,12 +134,17 @@ hosts involved, referenced packets, and a **MITRE ATT&CK** technique.
 ## Threat intelligence & tuning
 
 - **IOC watchlist** — flag user-supplied IPs/domains/hashes as confirmed hits.
+- **Offline feed import** — load a CSV / STIX / MISP / OpenIOC / plain-list feed; IPs, domains and
+  SHA-256 hashes are extracted (defanged forms handled) and merged into the watchlist, with no
+  outbound lookups.
 - **Allowlist** — suppress findings involving known-good IPs/domains/JA3.
 - **Detector toggles** — enable/disable any detector category.
 - **Sensitivity** — Low / Normal / High, rescaling thresholds.
 
 ## Workflow & UX
 
+- Analyst-flow **tab order** (Overview → Expert → Report → … → Packets); opens on Overview.
+- **Timeline window** scoping (brush to filter or re-analyse a slice).
 - Global **search** command palette.
 - **Host view** drill-down (findings + sessions + enrichment).
 - **Sortable** tables, **click-to-copy** indicators, **active-filter** banner.
@@ -133,10 +156,14 @@ hosts involved, referenced packets, and a **MITRE ATT&CK** technique.
 
 - 100% client-side; **zero network calls**; nothing uploaded.
 - Single self-contained HTML file; runs offline and in air-gapped environments.
+- **Off-thread parsing** — parse/decode/analyse run in a Web Worker so the UI stays responsive on
+  large captures (with automatic main-thread fallback).
 - Optional local workspace passphrase (a privacy screen, not authentication).
 
 ## Known limitations
 
 See [README.md](README.md#privacy-and-honest-limitations). In short: heuristic detection,
-network-only evidence, approximate enrichment, and no live capture / real auth / live TI /
-multi-GB scale / Web-Worker parsing (those need a backend or are a staged follow-up).
+network-only evidence, approximate enrichment, offline-only threat intel (feed import, not live
+lookups), and no live capture / continuous monitoring / real multi-user auth/RBAC / multi-GB scale
+(those need the server deployment). SMB object export and TLS payload decryption are not yet
+implemented.

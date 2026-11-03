@@ -23,10 +23,12 @@ analyzer.js   The engine: capture parsing, protocol decoding, detection, reporti
               Pure JavaScript, no DOM. Exposes a single global `PacketSentinel`/`FluxHunt` object
               and also `module.exports` for Node tests.
 page.html     The UI shell: markup, CSS (token-based theming), and the presentation JavaScript.
-              Contains a single `/*__ANALYZER__*/` placeholder.
-index.html    Build output: page.html with analyzer.js inlined (used for the hosted artifact).
+              Contains a single `/*__ANALYZER__*/` placeholder, inside a `<script id="fh-engine">`
+              whose text the Web Worker reuses (see below).
+index.html    The hand-written GitHub Pages landing page (committed; not a build output).
+app.html      Build output: page.html with analyzer.js inlined, web fonts kept (hosted; gitignored).
 FluxHunt.html Build output: the portable standalone file (full HTML document, web fonts dropped
-              so it is fully offline).
+              so it makes no network requests; committed).
 test/         Node test harness and synthetic edge-case captures.
 docs/         This documentation.
 ```
@@ -36,13 +38,15 @@ docs/         This documentation.
 The build is a trivial inline step (no bundler):
 
 1. Read `analyzer.js`, strip its `module.exports` line.
-2. Replace the `/*__ANALYZER__*/` placeholder in `page.html` with the engine source → `index.html`.
+2. Replace the `/*__ANALYZER__*/` placeholder in `page.html` with the engine source → `app.html`
+   (hosted build, web fonts kept).
 3. For the portable file, additionally wrap it in a full `<!doctype html>` document and remove the
    Google-Fonts `<link>` (the CSS already declares system-font fallbacks) so the result makes **no**
    network requests → `FluxHunt.html`.
 
-A ~10-line script (Python or Node) does all three. The engine and UI are kept as separate readable
-sources precisely so the engine can be unit-tested without a browser.
+`node build.mjs` does both. `index.html` is **not** generated — it is the hand-written landing page
+served by GitHub Pages, which links to `FluxHunt.html`. The engine and UI are kept as separate
+readable sources precisely so the engine can be unit-tested without a browser.
 
 ## Data flow
 
@@ -60,6 +64,7 @@ File(s) ──▶ parseCapture()         framing only: split records, read heade
                     tcpHealth, protoTree, categories
          ──▶ UI renders the result; interactive views (packet detail, Follow Stream,
              pcap export) use the retained decoded packets + raw capture on the main thread
+         (parse→decode→analyze runs in a Web Worker off the main thread; see below)
          ──▶ buildReport(result, meta)  → report object → Markdown/HTML/PDF
          ──▶ exportIoCs(result, format) → STIX/MISP/CSV/Suricata/YARA/Sigma/OpenIOC/CEF/Zeek/Navigator
          ──▶ exportPcap(capture, filter, {anonymize})  → sub-/anonymized .pcap
@@ -94,9 +99,18 @@ the engine reusable and the UI decoupled.
 - **Theming** — every colour is a CSS custom property defined on `:root`, redefined for dark mode
   (both via `prefers-color-scheme` and an explicit `data-theme`) and for the colourblind-safe
   palette (`data-cb`). Density is `data-density`.
-- **State** — a single `state` object holds the capture, decoded packets, analysis result, and view
-  state. `render()` repaints all views from the result; `reanalyze()` re-runs the engine when a
-  setting changes while preserving the current view.
+- **Off-thread parsing** — `analyzeInputs` runs the heavy `parseCapture → decodePacket → analyze`
+  pipeline in a **Web Worker** (`runInWorker`) so the UI never freezes. The worker is built at
+  runtime from a Blob of the inlined engine's **own** source — read from the `<script id="fh-engine">`
+  element's `textContent` — plus a small harness, so there is **no code duplication** and the file
+  stays self-contained. It posts progress messages and returns the plain-data result (structured
+  clone). `analyzeInline` is the identical main-thread fallback used when Workers are unavailable or
+  construction is blocked (e.g. a strict CSP).
+- **State** — a single `state` object holds the capture, decoded packets, analysis result, the active
+  time window, per-packet comments, and view state. `render()` repaints all views from the result;
+  `reanalyze()` re-runs the engine when a setting changes while preserving the current view. A
+  brushed **time window** re-runs `analyze` on a time-sliced packet subset (`state.fullResult` stashes
+  the whole-capture result for "Return to full capture").
 - **Views** — each tab is a `.view` element toggled by `showView`, which also routes the URL hash.
   Interactive features (packet detail, Follow Stream, sub-pcap export) read the retained decoded
   packets and raw capture directly.
@@ -125,8 +139,10 @@ guarantee).
 
 ## What is intentionally not here
 
-- **Live capture, authentication/RBAC, live threat-intel lookups, SIEM push, multi-GB scale** —
-  these require a server and are out of scope for a single offline file.
-- **Web-Worker off-thread parsing** — a staged follow-up; it requires restructuring the main-thread
-  data flow that the interactive views depend on.
+- **Live packet capture, continuous monitoring, multi-user authentication/RBAC, live threat-intel
+  lookups, SIEM push, multi-GB scale** — these require a server (the browser has no raw-socket
+  access and a tab is memory-bound) and are out of scope for a single offline file. Threat intel is
+  supported *offline* via feed-file import instead of live lookups.
+- **SMB object export** — the Objects tab carves HTTP/FTP/TFTP; SMB2 file reassembly is a planned
+  follow-up.
 - **TLS payload decryption** (`SSLKEYLOGFILE`) — a large, separate cryptographic module.
