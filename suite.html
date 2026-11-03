@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>iamjammie — threat-hunting tools, frameworks & knowledge</title>
-<meta name="description" content="Open-source threat-hunting and incident-response work by iamjammie: the Hunt suite (Hunt-Sage knowledge hub, FluxHunt network analysis, HostHunt host triage), the SPECTRA space-cyber framework, and curated learning labs. Offline, ATT&CK-mapped, defensive.">
+<meta name="description" content="Open-source threat-hunting and incident-response work by iamjammie: the Hunt suite (Hunt-Sage knowledge hub, FluxHunt network analysis, HostHunt host triage, AirHunt air-gap evidence transfer), the SPECTRA space-cyber framework, and curated learning labs. Offline, ATT&CK-mapped, defensive.">
 <style>
   :root{
     --bg:#0e1418; --surface:#151c22; --surface-2:#1a232a; --line:#2b3741;
@@ -13,6 +13,7 @@
     --host:#e8a53f; --host-fg:#2a1c05; --host-soft:#3a2b12;
     --sage:#a78bfa; --sage-fg:#1e1340; --sage-soft:#241b45;
     --spectra:#6fa8ee; --spectra-fg:#07182e; --spectra-soft:#152a42;
+    --air:#8bd450; --air-fg:#132604; --air-soft:#24391a;
     color-scheme:dark;
   }
   @media (prefers-color-scheme: light){
@@ -23,6 +24,7 @@
       --host:#a8650a; --host-fg:#fff; --host-soft:#f5e6cb;
       --sage:#6d28d9; --sage-fg:#fff; --sage-soft:#ece4fb;
       --spectra:#2563eb; --spectra-fg:#fff; --spectra-soft:#dde8fb;
+      --air:#3f7d0f; --air-fg:#fff; --air-soft:#e1f0d3;
       color-scheme:light;
     }
   }
@@ -59,6 +61,7 @@
   .sub{color:var(--muted); margin:0 0 26px; max-width:64ch}
 
   .grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
+  .grid4{display:grid; grid-template-columns:repeat(4,1fr); gap:16px}
   .grid2{display:grid; grid-template-columns:repeat(2,1fr); gap:16px}
   .card{background:var(--surface); border:1px solid var(--line); border-top-width:4px; border-radius:var(--radius); padding:22px 20px; display:flex; flex-direction:column}
   .card .badge{display:inline-flex; align-items:center; gap:8px; font-size:11.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin-bottom:11px}
@@ -74,6 +77,7 @@
   .card.flux{border-top-color:var(--flux)} .card.flux .dot{background:var(--flux)} .card.flux .links a.pri{background:var(--flux); color:var(--flux-fg); border-color:var(--flux)}
   .card.host{border-top-color:var(--host)} .card.host .dot{background:var(--host)} .card.host .links a.pri{background:var(--host); color:var(--host-fg); border-color:var(--host)}
   .card.sage{border-top-color:var(--sage)} .card.sage .dot{background:var(--sage)} .card.sage .links a.pri{background:var(--sage); color:var(--sage-fg); border-color:var(--sage)}
+  .card.air{border-top-color:var(--air)} .card.air .dot{background:var(--air)} .card.air .links a.pri{background:var(--air); color:var(--air-fg); border-color:var(--air)}
   .card.spectra{border-top-color:var(--spectra)} .card.spectra .dot{background:var(--spectra)} .card.spectra .links a.pri{background:var(--spectra); color:var(--spectra-fg); border-color:var(--spectra)}
 
   .combo{background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--line); border-radius:18px; padding:26px 24px}
@@ -103,7 +107,9 @@
   .foot-links{display:flex; flex-wrap:wrap; gap:16px}
   .note{font-size:13px; color:var(--muted); background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--host); border-radius:10px; padding:14px 16px; margin-top:24px; max-width:76ch}
 
+  @media (max-width:1100px){ .grid4{grid-template-columns:repeat(2,1fr)} }
   @media (max-width:860px){ .grid3{grid-template-columns:1fr} .grid2{grid-template-columns:1fr} }
+  @media (max-width:620px){ .grid4{grid-template-columns:1fr} }
   header.hero .wrap{position:relative; z-index:1}
   #huntbg{position:absolute; inset:0; z-index:0; pointer-events:none}
 </style>
@@ -122,7 +128,7 @@
     </div>
     <h1>Threat hunting — from the <span class="b">wire</span> to the <span class="c">box</span> to the <span class="a">playbook</span>.</h1>
     <p class="lede">Open-source, offline, MITRE&nbsp;ATT&amp;CK-mapped tooling and knowledge for threat hunters and
-      incident responders — a network analyser, a host triage tool, a hunting knowledge hub, and a
+      incident responders — a network analyser, a host triage tool, an air-gap evidence transfer, a hunting knowledge hub, and a
       space-systems security framework. Everything here is defensive, dependency-light, and free to audit.</p>
     <div class="cta">
       <a class="btn pri" href="#suite">The Hunt suite ↓</a>
@@ -134,10 +140,11 @@
 <section id="suite">
   <div class="wrap">
     <p class="eyebrow">The Hunt suite</p>
-    <h2>Learn it, hunt the host, hunt the wire</h2>
-    <p class="sub">Three companion projects that cover a hunt end to end — the knowledge to form a hypothesis,
-      the host-side evidence, and the network-side evidence — all mapped to the same ATT&amp;CK techniques.</p>
-    <div class="grid3">
+    <h2>Learn it, hunt the host, hunt the wire, carry it out</h2>
+    <p class="sub">Four companion projects that cover a hunt end to end — the knowledge to form a hypothesis,
+      the host-side evidence, the network-side evidence, and a way to get the findings out of an isolated
+      environment — all offline and mapped to the same ATT&amp;CK techniques.</p>
+    <div class="grid4">
 
       <div class="card sage">
         <span class="badge"><span class="dot"></span>Knowledge hub</span>
@@ -191,6 +198,23 @@
         </div>
       </div>
 
+      <div class="card air">
+        <span class="badge"><span class="dot"></span>Across the gap · optical</span>
+        <h3>AirHunt</h3>
+        <p class="tag">Moving hunt evidence across the air gap.</p>
+        <p>Two self-contained HTML files: the isolated screen animates a report, bundle or IOC list as a loop of
+           QR codes; a phone reads it back, verifies the SHA-256 and hands it to the share sheet.</p>
+        <ul>
+          <li><b>Own QR encoder + decoder</b> — zero network, zero dependencies</li>
+          <li>Live camera, recorded clip or photos; terminal sender for headless hosts</li>
+          <li>One-way by physics — nothing flows back into the air gap</li>
+        </ul>
+        <div class="links">
+          <a class="pri" href="https://github.com/iamjammie/AirHunt">Source</a>
+          <a href="https://github.com/iamjammie/AirHunt#quick-start">Quick start</a>
+        </div>
+      </div>
+
     </div>
   </div>
 </section>
@@ -201,12 +225,14 @@
       <p class="eyebrow">Better together</p>
       <h2>One incident, every angle</h2>
       <p class="sub">An incident rarely lives in one place. Form the hypothesis, pull host and network evidence,
-        and line them up on the same ATT&amp;CK technique — two confirmations beat one guess.</p>
+        line them up on the same ATT&amp;CK technique — two confirmations beat one guess — and get the result out
+        even when the box has no network.</p>
       <div class="steps">
         <div class="step"><div class="n">1</div><h4>Hypothesise</h4><p>Pick a Hunt-Sage playbook and its ATT&amp;CK techniques to hunt.</p></div>
         <div class="step"><div class="n">2</div><h4>Hunt the host</h4><p>HostHunt collects the endpoint — persistence, processes, logs.</p></div>
         <div class="step"><div class="n">3</div><h4>Hunt the wire</h4><p>FluxHunt analyses the capture — beaconing, exfil, carved files.</p></div>
         <div class="step"><div class="n">4</div><h4>Correlate</h4><p>Pivot on shared IOCs; both map to one ATT&amp;CK kill-chain story.</p></div>
+        <div class="step"><div class="n">5</div><h4>Carry it out</h4><p>AirHunt moves the report off the isolated box — by screen and camera, verified.</p></div>
       </div>
     </div>
   </div>
@@ -271,7 +297,7 @@
     <h2>Built the same way</h2>
     <div class="principles">
       <div class="pr"><h4>Offline &amp; air-gap-friendly</h4><p>No uploads, no live calls — evidence stays on the machine it's examined on.</p></div>
-      <div class="pr"><h4>Minimal dependencies</h4><p>FluxHunt is one HTML file; HostHunt is pure Python standard library.</p></div>
+      <div class="pr"><h4>Minimal dependencies</h4><p>FluxHunt is one HTML file; HostHunt is pure Python standard library; AirHunt is two HTML files.</p></div>
       <div class="pr"><h4>ATT&amp;CK-mapped</h4><p>Findings and playbooks carry MITRE ATT&amp;CK techniques for triage and reporting.</p></div>
       <div class="pr"><h4>Defensive &amp; MIT-licensed</h4><p>Read-only analysis for responders — open source, free to audit and extend.</p></div>
     </div>
@@ -288,6 +314,7 @@
       <a href="https://github.com/iamjammie/hunt-sage">Hunt-Sage</a>
       <a href="https://github.com/iamjammie/FluxHunt">FluxHunt</a>
       <a href="https://github.com/iamjammie/HostHunt">HostHunt</a>
+      <a href="https://github.com/iamjammie/AirHunt">AirHunt</a>
       <a href="https://github.com/iamjammie/SPECTRA---Space-Cyber-Framework">SPECTRA</a>
       <a href="https://github.com/iamjammie">Profile</a>
     </nav>
