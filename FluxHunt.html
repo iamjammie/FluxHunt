@@ -249,15 +249,38 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 .gtable-wrap td.mono { font-family: var(--font-mono); }
 .gtable-wrap tbody tr { cursor: pointer; }
 .gtable-wrap tbody tr:hover { background: var(--surface-2); }
-.killchain { display: grid; gap: 7px; }
-.kc-step { display: grid; grid-template-columns: 22px 1fr; gap: 9px; align-items: start; }
-.kc-dot { width: 14px; height: 14px; border-radius: 50%; margin-top: 2px; border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--line); }
-.kc-step .kc-body { font-size: 12.5px; min-width: 0; }
-.kc-step .kc-phase { font-weight: 700; }
-.kc-step .kc-detail { color: var(--muted); overflow-wrap: anywhere; }
-.kc-step:not(:last-child) .kc-dot { position: relative; }
-.kc-step:not(:last-child) .kc-dot::after { content: ""; position: absolute; left: 50%; top: 14px; transform: translateX(-50%); width: 2px; height: calc(100% + 7px); background: var(--line); }
-.kc-empty { color: var(--muted); font-size: 13px; }
+/* attack chain — horizontal progressive timeline */
+.kcx { position: relative; }
+.kcx-scroll { overflow-x: auto; overflow-y: hidden; padding: 20px 4px 6px; scrollbar-width: thin; }
+.kcx-track { display: flex; align-items: flex-start; min-width: min-content; }
+.kcx-step { position: relative; flex: 1 0 150px; max-width: 230px; display: flex; flex-direction: column; align-items: center; text-align: center; cursor: pointer; padding: 0 4px; }
+.kcx-step .kcx-seg { position: absolute; top: 12px; left: calc(-50% + 13px); width: calc(100% - 26px); height: 3px; background: var(--seg, var(--line)); z-index: 0; }
+.kcx-step:first-child .kcx-seg { display: none; }
+.kcx-marker { position: relative; z-index: 1; width: 26px; height: 26px; border-radius: 50%; background: var(--mk, var(--muted)); border: 3px solid var(--surface); box-shadow: 0 0 0 2px var(--mk, var(--muted)); color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 800; transition: transform .1s ease; }
+.kcx-step:hover .kcx-marker { transform: scale(1.18); }
+.kcx-step.sev-high .kcx-marker { box-shadow: 0 0 0 2px var(--mk), 0 0 0 5px color-mix(in srgb, var(--high) 45%, transparent); }
+.kcx-phase { font-weight: 700; font-size: 12px; margin-top: 8px; line-height: 1.25; }
+.kcx-time { font-size: 11px; color: var(--muted); font-family: var(--font-mono); margin-top: 1px; }
+.kcx-title { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.kcx-empty { color: var(--muted); font-size: 13px; padding: 8px 2px; }
+.kctip { position: absolute; z-index: 6; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 12px; line-height: 1.45; padding: 8px 10px; border-radius: 7px; max-width: 280px; box-shadow: 0 6px 20px rgba(0,0,0,.3); }
+.kctip b { font-weight: 700; }
+.kctip .kct-ip { font-family: var(--font-mono); }
+.kctip .kct-att { display: inline-block; margin-top: 4px; font-family: var(--font-mono); font-size: 11px; opacity: .85; }
+/* findings by category */
+.fcat { display: grid; grid-template-columns: 240px 1fr; gap: 18px; align-items: center; }
+.fcat-chart { display: grid; place-items: center; }
+.fcat-sev { display: flex; flex-wrap: wrap; gap: 6px; }
+.fcat-bars { display: grid; gap: 7px; align-content: center; min-width: 0; }
+.cbar { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; cursor: pointer; }
+.cbar:hover .cbar-name { color: var(--fg); }
+.cbar-name { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cbar-name i { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.cbar-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cbar-val { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cbar-track { grid-column: 1 / -1; height: 7px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.cbar-fill { height: 100%; border-radius: 4px; }
+@media (max-width: 560px) { .fcat { grid-template-columns: 1fr; } }
 
 /* settings / modal */
 .modal { position: fixed; inset: 0; background: rgba(10,16,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: max(24px, env(safe-area-inset-top)) 16px 24px; z-index: 50; overflow-y: auto; }
@@ -381,8 +404,17 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
           <div class="glegend-wrap" id="glegend"></div>
           <details class="gtable-wrap"><summary>Show mapped hosts as a table</summary><div id="gtable"></div></details>
         </div>
-        <div class="panel"><h2>Attack chain</h2><div id="killchain" class="killchain"></div></div>
-        <div class="panel"><h2>Findings by category</h2><canvas id="donut" height="220"></canvas><div id="donutLegend" class="dlegend"></div></div>
+        <div class="panel wide">
+          <div class="head-row"><h2>Attack chain</h2><span class="hint" id="kcxHint"></span></div>
+          <div id="killchain" class="kcx"><div class="kcx-scroll"><div class="kcx-track" id="kcxTrack"></div></div><div class="kctip" id="kctip" hidden></div></div>
+        </div>
+        <div class="panel wide">
+          <div class="head-row"><h2>Findings by category</h2><div class="fcat-sev" id="donutSev"></div></div>
+          <div class="fcat">
+            <div class="fcat-chart"><canvas id="donut" height="220"></canvas></div>
+            <div class="fcat-bars" id="catBars"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2851,7 +2883,6 @@ const FluxHunt = (function () {
     if (location.hash.slice(1) !== v) { try { history.replaceState(null, '', '#' + v); } catch (e) { location.hash = v; } }
   }
   window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (VIEWS.includes(v) && !$('results').hidden) showView(v); });
-  $('killchain').addEventListener('click', e => { const b = e.target.closest('button[data-fid]'); if (b && state.result) { const f = state.result.findings.find(x => x.id === +b.dataset.fid); if (f) setFilter(filterForFinding(f)); } });
 
   // ---------------- render
   function render() {
@@ -3192,15 +3223,53 @@ const FluxHunt = (function () {
   const ROLE_NAME = { c2: 'External C2 / exfil', flagged: 'Internal, in a finding', suspect: 'Flagged external', internal: 'Internal host', external: 'External host' };
   const roleName = k => ROLE_NAME[k] || k;
   let graphState = null, graphRAF = 0;
+  const PHASE_COLOR = { 'Threat-intel match': '--high', 'Reconnaissance': '--low', 'Defense evasion': '--medium', 'Credential access': '--medium', 'Credential exposure': '--medium', 'Command & control': '--high', 'Command & control (covert)': '--high', 'C2 infrastructure': '--high', 'Lateral movement': '--medium', 'Exfiltration': '--high', 'Impact': '--high', 'Collection / man-in-the-middle': '--medium', 'Supporting observation': '--info', 'Network health': '--info', 'Capture quality': '--info', 'Policy / hygiene': '--low' };
   function renderGraphView() {
     const r = state.result; if (!r) return;
-    // kill-chain strip from the report narrative
     const rep = state.report || A.buildReport(r, {});
-    const phaseColor = { 'Reconnaissance': '--low', 'Defense evasion': '--medium', 'Credential access': '--medium', 'Credential exposure': '--medium', 'Command & control': '--high', 'Command & control (covert)': '--high', 'C2 infrastructure': '--high', 'Lateral movement': '--medium', 'Exfiltration': '--high', 'Impact': '--high', 'Collection / man-in-the-middle': '--medium' };
-    $('killchain').innerHTML = rep.narrative.length ? rep.narrative.map(n => `<div class="kc-step"><span class="kc-dot" style="background:var(${phaseColor[n.phase] || '--muted'})"></span><div class="kc-body"><div class="kc-phase">${esc(n.phase)} <span class="muted">${esc(n.at)}</span></div><div class="kc-detail"><button class="link" data-fid="${n.id}">${esc(n.title)}</button></div></div>`).join('') : '<div class="kc-empty">No multi-stage attack chain reconstructed. Individual findings are in the Findings tab.</div>';
+    renderKillchain(rep.narrative);
     drawDonut();
     initGraph();
   }
+  function renderKillchain(narr) {
+    const track = $('kcxTrack'), hint = $('kcxHint');
+    if (!narr || !narr.length) {
+      track.innerHTML = '<div class="kcx-empty">No multi-stage attack chain reconstructed — the findings did not correlate into a single progression. See the Findings tab for the individual detections.</div>';
+      hint.textContent = ''; return;
+    }
+    hint.textContent = narr.length + ' stage' + (narr.length > 1 ? 's' : '') + ' · ' + esc(narr[0].at) + ' → ' + esc(narr[narr.length - 1].at);
+    track.innerHTML = narr.map((n, i) => {
+      const col = PHASE_COLOR[n.phase] || '--muted';
+      const prev = i ? (PHASE_COLOR[narr[i - 1].phase] || '--muted') : col;
+      return `<div class="kcx-step sev-${n.severity}" data-fid="${n.id}" style="--mk:var(${col})" tabindex="0" role="button" aria-label="${esc(n.phase)}: ${esc(n.title)}">`
+        + `<div class="kcx-seg" style="--seg:var(${prev})"></div>`
+        + `<div class="kcx-marker">${i + 1}</div>`
+        + `<div class="kcx-phase">${esc(n.phase)}</div>`
+        + `<div class="kcx-time">${esc(n.at)}</div>`
+        + `<div class="kcx-title">${esc(n.title)}</div></div>`;
+    }).join('');
+  }
+  function kcTipFor(fid) {
+    const f = state.result && state.result.findings.find(x => x.id === fid); if (!f) return '';
+    const sevTxt = f.severity.charAt(0).toUpperCase() + f.severity.slice(1);
+    const hosts = (f.hosts || []).filter(Boolean).slice(0, 3).join(', ');
+    return `<b>${esc(f.title)}</b><br>${esc(sevTxt)} · ${esc(f.category)}`
+      + (hosts ? `<br><span class="kct-ip">${esc(hosts)}</span>` : '')
+      + (f.attack ? `<span class="kct-att">ATT&CK ${esc(f.attack.id)} — ${esc(f.attack.name)}</span>` : '')
+      + `<br><span class="muted">Click to filter to this finding</span>`;
+  }
+  (function bindKillchain() {
+    const host = $('killchain'), tip = $('kctip');
+    const show = el => { const fid = +el.dataset.fid; const html = kcTipFor(fid); if (!html) return; tip.innerHTML = html; tip.hidden = false; place(el); };
+    const place = el => { const hr = host.getBoundingClientRect(), r = el.getBoundingClientRect(); let x = r.left - hr.left + r.width / 2 - tip.offsetWidth / 2; x = Math.max(4, Math.min(x, hr.width - tip.offsetWidth - 4)); let y = r.top - hr.top - tip.offsetHeight - 8; if (y < 0) y = r.bottom - hr.top + 8; tip.style.left = x + 'px'; tip.style.top = y + 'px'; };
+    host.addEventListener('mouseover', e => { const el = e.target.closest('.kcx-step'); if (el) show(el); });
+    host.addEventListener('mouseout', e => { if (e.target.closest('.kcx-step')) tip.hidden = true; });
+    host.addEventListener('focusin', e => { const el = e.target.closest('.kcx-step'); if (el) show(el); });
+    host.addEventListener('focusout', () => { tip.hidden = true; });
+    const go = el => { const f = state.result && state.result.findings.find(x => x.id === +el.dataset.fid); if (f) setFilter(filterForFinding(f)); };
+    host.addEventListener('click', e => { const el = e.target.closest('.kcx-step'); if (el) go(el); });
+    host.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.kcx-step')) { e.preventDefault(); go(e.target.closest('.kcx-step')); } });
+  })();
   function cssvar(k) { return getComputedStyle(document.documentElement).getPropertyValue(k).trim() || '#888'; }
   function initGraph() {
     const r = state.result, g = r.graph; const canvas = $('graph'), empty = $('gempty');
@@ -3328,20 +3397,29 @@ const FluxHunt = (function () {
   }
   function drawDonut() {
     const r = state.result; const cats = r.categories.slice(0, 10); const canvas = $('donut'); const dpr = window.devicePixelRatio || 1;
-    const W = canvas.clientWidth || 300, H = 220; canvas.width = W * dpr; canvas.height = H * dpr; const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
-    const nonInfo = r.findings.filter(f => f.severity !== 'info').length;
-    if (!cats.length || nonInfo === 0) {
-      g.fillStyle = cssvar('--muted'); g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = '13px ' + cssvar('--font-ui');
-      g.fillText('No non-informational findings to chart.', W / 2, H / 2); $('donutLegend').innerHTML = ''; return;
-    }
-    const total = cats.reduce((a, c) => a + c.n, 0) || 1; const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 10, r0 = R * 0.58;
+    const W = canvas.clientWidth || 260, H = 220; canvas.width = W * dpr; canvas.height = H * dpr; const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
     const sevColor = { high: '--high', medium: '--medium', low: '--low', info: '--info' };
+    // severity breakdown chips (every severity present in the capture)
+    const sevCount = { high: 0, medium: 0, low: 0, info: 0 }; for (const f of r.findings) sevCount[f.severity] = (sevCount[f.severity] || 0) + 1;
+    $('donutSev').innerHTML = ['high', 'medium', 'low', 'info'].filter(k => sevCount[k]).map(k => `<span class="pill ${k}">${sevCount[k]} ${k}</span>`).join('') || '<span class="pill info">no findings</span>';
+    if (!cats.length) {
+      g.fillStyle = cssvar('--muted'); g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = '13px ' + cssvar('--font-ui');
+      g.fillText('No findings to chart.', W / 2, H / 2); $('catBars').innerHTML = ''; return;
+    }
+    const allTotal = r.findings.length || 1; const shownTotal = cats.reduce((a, c) => a + c.n, 0); const otherN = Math.max(0, allTotal - shownTotal);
+    const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 10, r0 = R * 0.58;
     let ang = -Math.PI / 2;
-    cats.forEach(c => { const a2 = ang + (c.n / total) * 6.2832; g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, R, ang, a2); g.closePath(); g.fillStyle = cssvar(sevColor[c.sev]); g.globalAlpha = 0.55 + 0.45 * (1 - ['high', 'medium', 'low', 'info'].indexOf(c.sev) / 3); g.fill(); ang = a2; });
+    cats.forEach(c => { const a2 = ang + (c.n / allTotal) * 6.2832; g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, R, ang, a2); g.closePath(); g.fillStyle = cssvar(sevColor[c.sev]); g.globalAlpha = 0.55 + 0.45 * (1 - ['high', 'medium', 'low', 'info'].indexOf(c.sev) / 3); g.fill(); ang = a2; });
+    if (otherN > 0) { const a2 = ang + (otherN / allTotal) * 6.2832; g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, R, ang, a2); g.closePath(); g.globalAlpha = 0.4; g.fillStyle = cssvar('--info'); g.fill(); ang = a2; }
     g.globalAlpha = 1; g.beginPath(); g.arc(cx, cy, r0, 0, 6.2832); g.fillStyle = cssvar('--surface'); g.fill();
-    g.fillStyle = cssvar('--fg'); g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.font = '700 22px ' + cssvar('--font-ui'); g.fillText(String(nonInfo), cx, cy); g.font = '11px ' + cssvar('--font-ui'); g.fillStyle = cssvar('--muted'); g.fillText('findings', cx, cy + 16);
-    $('donutLegend').innerHTML = cats.map(c => `<span><i style="background:var(${sevColor[c.sev]})"></i>${esc(c.cat)} (${c.n}, ${Math.round(c.n / total * 100)}%)</span>`).join('');
+    g.fillStyle = cssvar('--fg'); g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.font = '700 24px ' + cssvar('--font-ui'); g.fillText(String(allTotal), cx, cy); g.font = '11px ' + cssvar('--font-ui'); g.fillStyle = cssvar('--muted'); g.fillText('findings', cx, cy + 16);
+    // ranked category bars (count + share of all findings), click to filter the Findings view
+    const maxN = Math.max(1, ...cats.map(c => c.n));
+    let bars = cats.map(c => `<div class="cbar" data-cat="${esc(c.cat)}" title="Show ${esc(c.cat)} findings"><div class="cbar-name"><i style="background:var(${sevColor[c.sev]})"></i><span>${esc(c.cat)}</span></div><div class="cbar-val">${c.n} · ${Math.round(c.n / allTotal * 100)}%</div><div class="cbar-track"><div class="cbar-fill" style="width:${Math.max(4, c.n / maxN * 100)}%;background:var(${sevColor[c.sev]})"></div></div></div>`).join('');
+    if (otherN > 0) bars += `<div class="cbar" style="cursor:default" title="${r.categories.length - cats.length} further categor${r.categories.length - cats.length === 1 ? 'y' : 'ies'}"><div class="cbar-name"><i style="background:var(--info)"></i><span>Other (${r.categories.length - cats.length} categor${r.categories.length - cats.length === 1 ? 'y' : 'ies'})</span></div><div class="cbar-val">${otherN} · ${Math.round(otherN / allTotal * 100)}%</div><div class="cbar-track"><div class="cbar-fill" style="width:${Math.max(4, otherN / maxN * 100)}%;background:var(--info)"></div></div></div>`;
+    $('catBars').innerHTML = bars;
   }
+  $('catBars').addEventListener('click', e => { const b = e.target.closest('.cbar'); if (!b || !b.dataset.cat) return; state.sevFilter = 'all'; state.catFilter = b.dataset.cat; renderFindings(); showView('findings'); window.scrollTo({ top: 0 }); });
   function updateStats() {
     const gs = graphState; if (!gs || !state.result) return; const g = state.result.graph;
     const vis = gs.nodes.filter(n => !gs.hideRoles.has(n.role));

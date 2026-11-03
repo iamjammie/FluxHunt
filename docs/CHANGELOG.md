@@ -10,6 +10,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Changed
+- **Attack chain redesigned as a horizontal timeline.** The kill-chain is now a full-width
+  progressive bar: numbered, phase-coloured stage markers joined by a progress line, each with its
+  phase, time offset and a short title, laid out left-to-right (scrolls when long). Hovering a stage
+  shows a rich tooltip (title, severity, category, hosts, ATT&CK technique); clicking filters to that
+  finding. Fixes a layout bug where stage text could collapse to one character per line in the old
+  cramped half-width panel.
+- **Findings-by-category enriched.** The panel is now full-width with the donut beside a ranked set
+  of per-category bars (count + share of all findings, click a bar to filter the Findings view), a
+  severity-breakdown chip row (high/medium/low/info), and an "Other" slice/row so the donut and the
+  counts always reconcile to the true total.
 - **Attack map overhaul.** Host nodes are now labelled on-canvas (auto / all / off, legible at any
   zoom); conversation edges are weighted by byte volume and carry a direction arrow showing the
   dominant flow; hovering a host dims everything but its own links. Added **Fit** (auto-frame all
