@@ -338,6 +338,14 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 .crule-add { display: grid; grid-template-columns: 1fr 96px auto; gap: 8px; margin-top: 8px; }
 .crule-add input, .crule-add select { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--radius); padding: 6px 8px; font-size: 12.5px; color: var(--fg); }
 .crule-add input { font-family: var(--font-mono); }
+/* stream modal: flow graph + stream graphs */
+.stabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.stab[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.flowwrap { overflow: auto; max-height: 56vh; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); margin-bottom: 8px; }
+#flowCanvas { width: 100%; display: block; }
+.sgcap { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; margin: 10px 0 4px; }
+#sgSeq, #sgWin, #sgRtt { width: 100%; display: block; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.s-syn { color: var(--accent); font-weight: 600; } .s-rst { color: var(--high); font-weight: 600; }
 
 /* settings / modal */
 .modal { position: fixed; inset: 0; background: rgba(10,16,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: max(24px, env(safe-area-inset-top)) 16px 24px; z-index: 50; overflow-y: auto; }
@@ -626,9 +634,15 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
   </div>
 </div>
 <div class="modal" id="streamModal" hidden>
-  <div class="sheet" role="dialog" aria-modal="true" style="max-width:820px">
+  <div class="sheet" role="dialog" aria-modal="true" style="max-width:960px">
     <div class="sheet-head"><h2 id="streamTitle">Follow stream</h2><div style="display:flex;gap:8px"><button class="btn small" id="streamHex" type="button">Hex</button><button class="btn small" id="streamClose" type="button">Close</button></div></div>
-    <div class="sheet-body"><div id="streamMeta" class="hint" style="flex-basis:auto"></div><pre id="streamBody" class="streampre"></pre></div>
+    <div class="sheet-body">
+      <div class="stabs"><button class="btn small stab" data-stab="conv" type="button" aria-pressed="true">Conversation</button><button class="btn small stab" data-stab="flow" type="button" aria-pressed="false">Flow graph</button><button class="btn small stab" data-stab="graphs" type="button" aria-pressed="false">Stream graphs</button></div>
+      <div id="streamMeta" class="hint" style="flex-basis:auto"></div>
+      <div id="stabConv"><pre id="streamBody" class="streampre"></pre></div>
+      <div id="stabFlow" hidden><div class="flowwrap"><canvas id="flowCanvas" height="300"></canvas></div><div class="hint">Vertical ladder: time flows down, arrows show each TCP segment between client and server. <span class="s-syn">teal</span> = SYN, <span class="s-rst">red</span> = RST, grey = data/ACK.</div></div>
+      <div id="stabGraphs" hidden><div class="sgcap">Sequence number over time (Stevens)</div><canvas id="sgSeq" height="150"></canvas><div class="sgcap">Advertised receive window</div><canvas id="sgWin" height="120"></canvas><div class="sgcap">Round-trip time (ACK latency, client→server data)</div><canvas id="sgRtt" height="120"></canvas></div>
+    </div>
   </div>
 </div>
 <div class="modal lock" id="lockModal" hidden>
@@ -1050,6 +1064,8 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     $('streamTitle').textContent = 'Follow stream · ' + csrc + ':' + csport + ' ↔ ' + cdst + ':' + cdport;
     $('streamMeta').innerHTML = `${fmtN(streamState.c.length)} B client→server (<span class="c2s">blue</span>), ${fmtN(streamState.s.length)} B server→client (<span class="s2c">red</span>). Reassembled by sequence number; gaps from missing packets are skipped.`;
     renderStream();
+    $('streamHex').textContent = 'Hex';
+    streamTab('conv');
     $('streamModal').hidden = false;
   }
   function esc2(b, s, e) { let r = ''; for (let i = s; i < e && i < b.length; i++) { const ch = b[i]; r += (ch >= 32 && ch < 127) ? String.fromCharCode(ch) : (ch === 10 ? '\n' : ch === 13 ? '' : '.'); } return r; }
@@ -1063,6 +1079,71 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     $('streamBody').innerHTML = html || '<span class="muted">No payload bytes in this conversation (control packets only, or encrypted with no plaintext).</span>';
   }
   $('streamHex').addEventListener('click', () => { if (streamState) { streamState.hex = !streamState.hex; $('streamHex').textContent = streamState.hex ? 'Text' : 'Hex'; renderStream(); } });
+  function collectConv() {
+    const st = streamState; const list = [];
+    for (const p of state.pkts) { if (!p.tcp) continue; const t = p.tcp; let dir = null;
+      if (p.src === st.csrc && t.sport === st.csport && p.dst === st.cdst && t.dport === st.cdport) dir = 'c';
+      else if (p.src === st.cdst && t.sport === st.cdport && p.dst === st.csrc && t.dport === st.csport) dir = 's';
+      if (!dir) continue; list.push({ dir, ts: p.ts, n: p.n, flags: t.flags, seq: t.seq >>> 0, ack: t.ack >>> 0, win: t.win, plen: t.payloadLen });
+    }
+    list.sort((a, b) => a.ts - b.ts || a.n - b.n); return list;
+  }
+  function streamTab(name) {
+    [['conv', 'stabConv'], ['flow', 'stabFlow'], ['graphs', 'stabGraphs']].forEach(([k, id]) => $(id).hidden = k !== name);
+    document.querySelectorAll('.stab').forEach(b => b.setAttribute('aria-pressed', b.dataset.stab === name));
+    $('streamHex').style.display = name === 'conv' ? '' : 'none';
+    if (name === 'flow') drawFlow(); else if (name === 'graphs') drawStreamGraphs();
+  }
+  document.querySelector('.stabs').addEventListener('click', e => { const b = e.target.closest('.stab'); if (b) streamTab(b.dataset.stab); });
+  function drawFlow() {
+    const st = streamState; if (!st) return; const conv = st.conv || (st.conv = collectConv());
+    const cv = $('flowCanvas'); const W = cv.clientWidth || 880; const rowH = 28, cap = 400; const items = conv.slice(0, cap);
+    const H = Math.max(140, items.length * rowH + 46); const dpr = window.devicePixelRatio || 1;
+    cv.width = W * dpr; cv.height = H * dpr; const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const lx = Math.round(W * 0.2), rx = Math.round(W * 0.8), midx = (lx + rx) / 2;
+    g.strokeStyle = cssvar('--line'); g.lineWidth = 1; g.beginPath(); g.moveTo(lx, 32); g.lineTo(lx, H - 12); g.moveTo(rx, 32); g.lineTo(rx, H - 12); g.stroke();
+    g.fillStyle = cssvar('--fg'); g.font = '600 12px ' + cssvar('--font-ui'); g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    g.fillText(st.csrc + ':' + st.csport, lx, 20); g.fillText(st.cdst + ':' + st.cdport, rx, 20);
+    const t0 = items.length ? items[0].ts : 0; g.textBaseline = 'middle';
+    items.forEach((p, i) => {
+      const y = 46 + i * rowH; const c2s = p.dir === 'c'; const x1 = c2s ? lx : rx, x2 = c2s ? rx : lx; const dir = x2 > x1 ? 1 : -1;
+      const flags = A.flagStr(p.flags); const col = /R/.test(flags) ? cssvar('--high') : (/S/.test(flags) ? cssvar('--accent') : cssvar('--muted'));
+      g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x1, y); g.lineTo(x2, y); g.stroke();
+      g.beginPath(); g.moveTo(x2, y); g.lineTo(x2 - dir * 8, y - 4); g.lineTo(x2 - dir * 8, y + 4); g.closePath(); g.fill();
+      g.fillStyle = cssvar('--fg'); g.font = '11px ' + cssvar('--font-mono'); g.textAlign = 'center'; g.textBaseline = 'bottom';
+      g.fillText('[' + flags + ']' + (p.plen ? ' len=' + p.plen : ''), midx, y - 2); g.textBaseline = 'middle';
+      g.fillStyle = cssvar('--muted'); g.font = '10px ' + cssvar('--font-mono'); g.textAlign = 'left'; g.fillText('+' + (p.ts - t0).toFixed(4) + 's', 4, y);
+    });
+    if (conv.length > cap) { g.fillStyle = cssvar('--muted'); g.textAlign = 'center'; g.fillText('… ' + (conv.length - cap) + ' more packets', W / 2, H - 6); }
+  }
+  function seqLe(a, b) { return ((b - a) >>> 0) < 0x80000000; }
+  function plotXY(canvas, series, yfmt) {
+    const W = canvas.clientWidth || 880, H = canvas.height / (window.devicePixelRatio || 1) || 150; const dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr; const hh = canvas.height / dpr; canvas.height = hh * dpr; const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, hh);
+    const pad = { l: 52, r: 10, t: 10, b: 18 }; const pts = series.flatMap(s => s.pts); if (!pts.length) { g.fillStyle = cssvar('--muted'); g.font = '12px ' + cssvar('--font-ui'); g.textAlign = 'center'; g.fillText('No data for this direction.', W / 2, hh / 2); return; }
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity; for (const p of pts) { if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x; if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y; }
+    if (maxX === minX) maxX = minX + 1; if (maxY === minY) maxY = minY + 1;
+    const X = x => pad.l + (x - minX) / (maxX - minX) * (W - pad.l - pad.r); const Y = y => hh - pad.b - (y - minY) / (maxY - minY) * (hh - pad.t - pad.b);
+    g.strokeStyle = cssvar('--line'); g.lineWidth = 1; g.beginPath(); g.moveTo(pad.l, pad.t); g.lineTo(pad.l, hh - pad.b); g.lineTo(W - pad.r, hh - pad.b); g.stroke();
+    g.fillStyle = cssvar('--muted'); g.font = '10px ' + cssvar('--font-mono'); g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillText(yfmt(maxY), pad.l - 4, Y(maxY) + 4); g.fillText(yfmt(minY), pad.l - 4, Y(minY) - 2);
+    g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillText('+' + (maxX - minX).toFixed(2) + 's', W - pad.r - 18, hh - 5);
+    for (const s of series) { if (!s.pts.length) continue; g.fillStyle = s.color; if (s.line) { g.strokeStyle = s.color; g.lineWidth = 1.3; g.beginPath(); s.pts.forEach((p, i) => { const x = X(p.x), y = Y(p.y); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke(); } for (const p of s.pts) { g.beginPath(); g.arc(X(p.x), Y(p.y), 1.8, 0, 6.2832); g.fill(); } }
+  }
+  function drawStreamGraphs() {
+    const st = streamState; if (!st) return; const conv = st.conv || (st.conv = collectConv()); const t0 = conv.length ? conv[0].ts : 0;
+    const cBase = conv.find(p => p.dir === 'c'); const sBase = conv.find(p => p.dir === 's');
+    const cz = cBase ? cBase.seq : 0, sz = sBase ? sBase.seq : 0;
+    const seqC = { color: cssvar('--accent'), pts: conv.filter(p => p.dir === 'c' && p.plen > 0).map(p => ({ x: p.ts - t0, y: ((p.seq - cz) >>> 0) })) };
+    const seqS = { color: cssvar('--high'), pts: conv.filter(p => p.dir === 's' && p.plen > 0).map(p => ({ x: p.ts - t0, y: ((p.seq - sz) >>> 0) })) };
+    plotXY($('sgSeq'), [seqC, seqS], v => (v > 1024 ? (v / 1024).toFixed(0) + 'k' : String(v | 0)));
+    const winC = { color: cssvar('--accent'), line: true, pts: conv.filter(p => p.dir === 'c').map(p => ({ x: p.ts - t0, y: p.win })) };
+    const winS = { color: cssvar('--high'), line: true, pts: conv.filter(p => p.dir === 's').map(p => ({ x: p.ts - t0, y: p.win })) };
+    plotXY($('sgWin'), [winC, winS], v => (v > 1024 ? (v / 1024).toFixed(0) + 'k' : String(v | 0)));
+    const pend = [], rtt = [];
+    for (const p of conv) { if (p.dir === 'c' && p.plen > 0) pend.push({ end: (p.seq + p.plen) >>> 0, ts: p.ts }); else if (p.dir === 's') { for (let i = pend.length - 1; i >= 0; i--) if (seqLe(pend[i].end, p.ack)) { const d = p.ts - pend[i].ts; if (d >= 0 && d < 10) rtt.push({ x: pend[i].ts - t0, y: d * 1000 }); pend.splice(i, 1); } } }
+    plotXY($('sgRtt'), [{ color: cssvar('--medium'), line: true, pts: rtt }], v => v.toFixed(1) + 'ms');
+  }
   $('streamClose').addEventListener('click', () => { $('streamModal').hidden = true; });
   $('streamModal').addEventListener('click', e => { if (e.target.id === 'streamModal') $('streamModal').hidden = true; });
   $('sessCsv').addEventListener('click', () => {

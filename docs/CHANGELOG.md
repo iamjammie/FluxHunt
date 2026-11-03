@@ -10,6 +10,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
+- **Flow sequence graph & TCP stream graphs.** Follow Stream now has three tabs: **Conversation**
+  (the existing transcript/hex), **Flow graph** — a Wireshark-style vertical ladder of every TCP
+  segment between client and server (SYN/SYN-ACK/ACK, data with lengths, FIN/RST, colour-coded) —
+  and **Stream graphs** — sequence-number-over-time (Stevens), advertised receive window, and
+  best-effort round-trip time (ACK latency) plotted per direction.
 - **Richer packet filters.** The packet-filter grammar gained `contains:`, `matches:`/`regex:`
   (regular expressions), port ranges (`port:1-1024`), and boolean `||` / `or` (OR across groups,
   with space / `&&` as AND and `!` as NOT).
