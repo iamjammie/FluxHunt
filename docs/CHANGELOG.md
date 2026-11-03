@@ -7,6 +7,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## Unreleased
+
+### Changed
+- **Attack map overhaul.** Host nodes are now labelled on-canvas (auto / all / off, legible at any
+  zoom); conversation edges are weighted by byte volume and carry a direction arrow showing the
+  dominant flow; hovering a host dims everything but its own links. Added **Fit** (auto-frame all
+  hosts), **Freeze/Resume** (pause the layout), and a **Labels** toggle.
+- **Legend rewritten** into three grouped, self-explanatory sections — Hosts (click a role to
+  show/hide it), Encoding (size = volume, red ring = high severity), and Links (normal vs.
+  between-flagged, arrow = direction, thickness = bytes).
+- **Display validation.** A live stats bar reports shown/total hosts, links, flagged and C2 counts,
+  and now surfaces the previously-hidden truncation notice ("top N talkers shown; M more omitted")
+  and any hidden host types. Added empty-states for a capture with no mappable hosts and for a
+  findings donut with nothing to chart, a zero-width-canvas guard, and an accessible
+  **"mapped hosts as a table"** view (click a row to filter that host). Donut legend now shows
+  percentages.
+
 ## 2.1 — Engine depth, interoperability, and UX
 
 ### Added

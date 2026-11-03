@@ -1608,12 +1608,12 @@ const FluxHunt = (function () {
       const ranked = [...st.hosts.values()].sort((a, b) => (b.bytesOut + b.bytesIn) - (a.bytesOut + a.bytesIn));
       const pick = new Set(); for (const h of hostSev.keys()) if (st.hosts.has(h)) pick.add(h);
       for (const h of ranked) { if (pick.size >= cap) break; pick.add(h.ip); }
-      const nodes = [...pick].map(ip => { const h = st.hosts.get(ip) || { ip, pkts: 0, bytesOut: 0, bytesIn: 0, internal: isPrivate(ip) }; const sev = hostSev.get(ip); let role = h.internal ? 'internal' : 'external'; if (sev) { if (!h.internal && (sev.cats.has('Command and control') || sev.cats.has('Covert channel') || sev.cats.has('Data exfiltration') || sev.cats.has('Malware delivery'))) role = 'c2'; else if (h.internal) role = 'flagged'; else role = 'suspect'; } return { ip, internal: h.internal, bytes: h.bytesOut + h.bytesIn, pkts: h.pkts, role, sev: sev ? sev.worst : null, cats: sev ? [...sev.cats] : [], fids: sev ? [...sev.fids] : [] }; });
+      const nodes = [...pick].map(ip => { const h = st.hosts.get(ip) || { ip, pkts: 0, bytesOut: 0, bytesIn: 0, internal: isPrivate(ip) }; const sev = hostSev.get(ip); let role = h.internal ? 'internal' : 'external'; if (sev) { if (!h.internal && (sev.cats.has('Command and control') || sev.cats.has('Covert channel') || sev.cats.has('Data exfiltration') || sev.cats.has('Malware delivery'))) role = 'c2'; else if (h.internal) role = 'flagged'; else role = 'suspect'; } return { ip, internal: h.internal, bytes: h.bytesOut + h.bytesIn, out: h.bytesOut || 0, inB: h.bytesIn || 0, pkts: h.pkts, role, sev: sev ? sev.worst : null, cats: sev ? [...sev.cats] : [], fids: sev ? [...sev.fids] : [] }; });
       const inNode = new Set(nodes.map(n => n.ip));
       const edges = [];
       const convArr = [...st.convs.values()].sort((a, b) => b.bytes - a.bytes);
-      for (const c of convArr) { if (edges.length >= 300) break; if (!inNode.has(c.a) || !inNode.has(c.b)) continue; const an = nodes.find(n => n.ip === c.a), bn = nodes.find(n => n.ip === c.b); const bad = (an && (an.role === 'c2' || an.role === 'flagged' || an.role === 'suspect')) && (bn && (bn.role === 'c2' || bn.role === 'flagged' || bn.role === 'suspect')); edges.push({ a: c.a, b: c.b, bytes: c.bytes, protos: [...c.protos].slice(0, 3), bad: !!bad }); }
-      return { nodes, edges, truncated: st.hosts.size > nodes.length };
+      for (const c of convArr) { if (edges.length >= 300) break; if (!inNode.has(c.a) || !inNode.has(c.b)) continue; const an = nodes.find(n => n.ip === c.a), bn = nodes.find(n => n.ip === c.b); const bad = (an && (an.role === 'c2' || an.role === 'flagged' || an.role === 'suspect')) && (bn && (bn.role === 'c2' || bn.role === 'flagged' || bn.role === 'suspect')); edges.push({ a: c.a, b: c.b, bytes: c.bytes, ab: c.bytesAB || 0, ba: c.bytesBA || 0, pkts: c.pkts, protos: [...c.protos].slice(0, 3), ports: [...c.ports].sort((x, y) => x - y).slice(0, 4), bad: !!bad }); }
+      return { nodes, edges, truncated: st.hosts.size > nodes.length, totalHosts: st.hosts.size, totalConvs: st.convs.size, shownHosts: nodes.length };
     }
   }
 

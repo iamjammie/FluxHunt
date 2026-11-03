@@ -208,9 +208,40 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 #graph:active { cursor: grabbing; }
 .gtip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 12px; padding: 6px 9px; border-radius: 6px; max-width: 240px; z-index: 5; line-height: 1.4; }
 .gtip b { font-family: var(--font-mono); }
-.glegend, .dlegend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); }
-.glegend span, .dlegend span { display: inline-flex; align-items: center; gap: 5px; }
-.glegend i, .dlegend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.dlegend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); }
+.dlegend span { display: inline-flex; align-items: center; gap: 5px; }
+.dlegend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+/* attack-map toolbar, stats, legend, table */
+.gtoolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.gstats { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--muted); margin: 8px 0; }
+.gstats span { display: inline-flex; align-items: center; gap: 4px; }
+.gstats b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.gstats .warn { color: var(--medium); }
+.gstats .warn::before { content: "\26A0"; margin-right: 3px; }
+.gempty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--muted); font-size: 13px; background: var(--surface-2); }
+.glegend-wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 18px; margin-top: 12px; font-size: 11.5px; color: var(--muted); }
+.lg-grp { display: grid; gap: 5px; align-content: start; }
+.lg-grp h4 { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; margin: 0 0 1px; }
+.lg-grp h4 .muted { font-weight: 400; text-transform: none; letter-spacing: 0; }
+.lg-item { display: flex; align-items: center; gap: 7px; line-height: 1.3; }
+.lg-item.clk { cursor: pointer; user-select: none; border-radius: 4px; }
+.lg-item.clk:hover { color: var(--fg); }
+.lg-item.off { opacity: .4; text-decoration: line-through; }
+.lg-dot { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 auto; }
+.lg-dot.ring { box-shadow: 0 0 0 2px var(--high); }
+.lg-line { width: 18px; height: 0; border-top: 2px solid var(--muted); flex: 0 0 auto; }
+.lg-line.bad { border-top: 2.5px solid var(--high); }
+.lg-size { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; width: 18px; justify-content: center; }
+.lg-size i { background: var(--muted); border-radius: 50%; display: inline-block; }
+.lg-arrow { color: var(--muted); font-size: 10px; width: 18px; text-align: center; flex: 0 0 auto; }
+.gtable-wrap { margin-top: 12px; }
+.gtable-wrap summary { cursor: pointer; color: var(--accent); font-size: 12px; width: fit-content; }
+.gtable-wrap table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+.gtable-wrap th, .gtable-wrap td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.gtable-wrap th { color: var(--muted); font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+.gtable-wrap td.mono { font-family: var(--font-mono); }
+.gtable-wrap tbody tr { cursor: pointer; }
+.gtable-wrap tbody tr:hover { background: var(--surface-2); }
 .killchain { display: grid; gap: 7px; }
 .kc-step { display: grid; grid-template-columns: 22px 1fr; gap: 9px; align-items: start; }
 .kc-dot { width: 14px; height: 14px; border-radius: 50%; margin-top: 2px; border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--line); }
@@ -336,9 +367,12 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     <div class="view" id="view-graph" hidden>
       <div class="grid2">
         <div class="panel wide">
-          <div class="head-row"><h2>Network &amp; attack map</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn small" id="graphPng" type="button">Save PNG</button><div class="glegend" id="glegend"></div></div></div>
-          <div class="graphwrap"><canvas id="graph" height="460"></canvas><div class="gtip" id="gtip" hidden></div></div>
-          <div class="hint">Hosts sized by traffic volume; edges are observed conversations. Red = external C2 / exfil / malware source, orange = internal host in a finding, amber = other flagged external. Drag to rearrange, click a host to see its packets, scroll to zoom.</div>
+          <div class="head-row"><h2>Network &amp; attack map</h2><div class="gtoolbar"><button class="btn small" id="graphFit" type="button" title="Fit all hosts in view">Fit</button><button class="btn small" id="graphFreeze" type="button" title="Pause or resume the layout animation">Freeze</button><button class="btn small" id="graphLabels" type="button" title="Cycle host-label visibility">Labels: auto</button><button class="btn small" id="graphPng" type="button">Save PNG</button></div></div>
+          <div class="gstats" id="gstats" aria-live="polite"></div>
+          <div class="graphwrap"><canvas id="graph" height="460" role="img" aria-label="Force-directed map of hosts and their conversations"></canvas><div class="gtip" id="gtip" hidden></div><div class="gempty" id="gempty" hidden></div></div>
+          <div class="hint">Drag a host to rearrange · click a host to filter its packets · scroll to zoom · use <b>Fit</b> to recentre.</div>
+          <div class="glegend-wrap" id="glegend"></div>
+          <details class="gtable-wrap"><summary>Show mapped hosts as a table</summary><div id="gtable"></div></details>
         </div>
         <div class="panel"><h2>Attack chain</h2><div id="killchain" class="killchain"></div></div>
         <div class="panel"><h2>Findings by category</h2><canvas id="donut" height="220"></canvas><div id="donutLegend" class="dlegend"></div></div>
@@ -439,7 +473,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
         <dl class="helpgrid">
           <dt>IR Report</dt><dd>Executive summary, attack narrative, timeline, affected assets, ATT&amp;CK coverage, technical findings, IOCs and chain of custody. Export to PDF / HTML / Markdown.</dd>
           <dt>Findings</dt><dd>Every detection, filterable by severity and category. Each links to its packets, hosts and ATT&amp;CK technique.</dd>
-          <dt>Attack Map</dt><dd>Force-directed host graph (red = C2, orange = host in a finding), the reconstructed kill-chain, and a findings donut.</dd>
+          <dt>Attack Map</dt><dd>Force-directed host graph: node colour = role (red = C2/exfil, orange = flagged), node size = traffic, red ring = high severity; edges are conversations (thicker = more bytes, arrow = main data direction). Use Fit/Freeze/Labels, click a legend role to hide it, or open the host table below. Alongside: the reconstructed kill-chain and a findings donut.</dd>
           <dt>Overview</dt><dd>Timeline, throughput, protocol hierarchy, expert-info / TCP health, top talkers and conversations.</dd>
           <dt>Hosts</dt><dd>Every host; click one for a consolidated host view (findings, sessions, enrichment).</dd>
           <dt>Sessions</dt><dd>One row per connection with bytes, RTT, retransmissions and a <b>Follow Stream</b> button.</dd>
@@ -936,6 +970,8 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 
   // ---------------- attack map (force-directed) + infographics
   const ROLE_COLOR = { c2: '--high', flagged: '--medium', suspect: '--medium', internal: '--accent', external: '--muted' };
+  const ROLE_NAME = { c2: 'External C2 / exfil', flagged: 'Internal, in a finding', suspect: 'Flagged external', internal: 'Internal host', external: 'External host' };
+  const roleName = k => ROLE_NAME[k] || k;
   let graphState = null, graphRAF = 0;
   function renderGraphView() {
     const r = state.result; if (!r) return;
@@ -948,19 +984,40 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
   }
   function cssvar(k) { return getComputedStyle(document.documentElement).getPropertyValue(k).trim() || '#888'; }
   function initGraph() {
-    const r = state.result, g = r.graph; const canvas = $('graph');
+    const r = state.result, g = r.graph; const canvas = $('graph'), empty = $('gempty');
+    cancelAnimationFrame(graphRAF);
+    if (!g || !g.nodes.length) {
+      graphState = null;
+      const ctx = canvas.getContext('2d'); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height);
+      empty.hidden = false; empty.textContent = 'No hosts with IP traffic to map in this capture.';
+      $('gstats').innerHTML = ''; $('glegend').innerHTML = ''; $('gtable').innerHTML = '';
+      return;
+    }
+    empty.hidden = true;
     const W = canvas.clientWidth || 600, H = 460;
-    const nodes = g.nodes.map((n, i) => ({ ...n, x: W / 2 + Math.cos(i) * (80 + i * 3) + (Math.random() - .5) * 40, y: H / 2 + Math.sin(i) * (60 + i * 2) + (Math.random() - .5) * 40, vx: 0, vy: 0, r: Math.max(4, Math.min(20, 4 + Math.log2(1 + n.bytes / 2048))) }));
+    // label the most important hosts by default: anything flagged, plus the biggest talkers
+    const keyTop = new Set([...g.nodes].sort((a, b) => b.bytes - a.bytes).slice(0, 6).map(n => n.ip));
+    const prev = graphState || {};
+    const nodes = g.nodes.map((n, i) => ({ ...n, x: W / 2 + Math.cos(i) * (80 + i * 3) + (Math.random() - .5) * 40, y: H / 2 + Math.sin(i) * (60 + i * 2) + (Math.random() - .5) * 40, vx: 0, vy: 0, r: Math.max(4, Math.min(22, 4 + Math.log2(1 + n.bytes / 2048))), keyLabel: !!n.sev || n.role === 'c2' || keyTop.has(n.ip) }));
     const index = new Map(nodes.map(n => [n.ip, n]));
-    const edges = g.edges.map(e => ({ a: index.get(e.a), b: index.get(e.b), bad: e.bad, bytes: e.bytes })).filter(e => e.a && e.b);
-    graphState = { nodes, edges, index, W, H, zoom: 1, ox: 0, oy: 0, drag: null, hover: null, alpha: 1 };
-    legendGraph();
-    runGraph();
-    bindGraph();
+    const edges = g.edges.map(e => ({ a: index.get(e.a), b: index.get(e.b), bad: e.bad, bytes: e.bytes, ab: e.ab, ba: e.ba, protos: e.protos || [], ports: e.ports || [] })).filter(e => e.a && e.b);
+    graphState = { nodes, edges, index, W, H, zoom: 1, ox: 0, oy: 0, drag: null, hover: null, labels: prev.labels || 'auto', freeze: false, hideRoles: new Set() };
+    $('graphFreeze').textContent = 'Freeze'; $('graphLabels').textContent = 'Labels: ' + graphState.labels;
+    legendGraph(); updateStats(); graphTable();
+    runGraph(); bindGraph();
   }
   function legendGraph() {
-    const items = [['c2', 'External C2 / exfil'], ['flagged', 'Internal, in a finding'], ['suspect', 'Flagged external'], ['internal', 'Internal host'], ['external', 'External host']];
-    $('glegend').innerHTML = items.map(([k, l]) => `<span><i style="background:var(${ROLE_COLOR[k]})"></i>${esc(l)}</span>`).join('');
+    const gs = graphState; const roles = ['c2', 'flagged', 'suspect', 'internal', 'external'];
+    const roleHtml = roles.map(k => `<div class="lg-item clk${gs && gs.hideRoles.has(k) ? ' off' : ''}" data-role="${k}" title="Show or hide these hosts"><span class="lg-dot" style="background:var(${ROLE_COLOR[k]})"></span>${esc(roleName(k))}</div>`).join('');
+    const encHtml = '<div class="lg-item"><span class="lg-dot ring" style="background:var(--medium)"></span>Red ring = high severity</div>'
+      + '<div class="lg-item"><span class="lg-size"><i style="width:4px;height:4px"></i><i style="width:8px;height:8px"></i><i style="width:12px;height:12px"></i></span>Size = traffic volume</div>';
+    const edgeHtml = '<div class="lg-item"><span class="lg-line"></span>Observed conversation</div>'
+      + '<div class="lg-item"><span class="lg-line bad"></span>Between flagged hosts</div>'
+      + '<div class="lg-item"><span class="lg-arrow">&#9654;</span>Arrow = main data direction</div>'
+      + '<div class="lg-item">Thicker line = more bytes</div>';
+    $('glegend').innerHTML = '<div class="lg-grp"><h4>Hosts <span class="muted">(click to toggle)</span></h4>' + roleHtml + '</div>'
+      + '<div class="lg-grp"><h4>Encoding</h4>' + encHtml + '</div>'
+      + '<div class="lg-grp"><h4>Links</h4>' + edgeHtml + '</div>';
   }
   function runGraph() {
     cancelAnimationFrame(graphRAF);
@@ -975,32 +1032,77 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
       // centering + integrate
       for (const n of nodes) { if (n === (gs.drag && gs.drag.node)) continue; n.vx += (gs.W / 2 - n.x) * 0.002; n.vy += (gs.H / 2 - n.y) * 0.002; n.vx *= 0.85; n.vy *= 0.85; n.x += n.vx; n.y += n.vy; }
       drawGraph();
-      if (++ticks < 400 && !gs.drag) graphRAF = requestAnimationFrame(step);
+      if (++ticks < 400 && !gs.drag && !gs.freeze) graphRAF = requestAnimationFrame(step);
+      else fitGraph();
     };
+    if (gs.freeze) { drawGraph(); return; }
     step();
+  }
+  function fitGraph() {
+    const gs = graphState; if (!gs || !gs.nodes.length) return;
+    const canvas = $('graph'); const W = canvas.clientWidth || gs.W || 600, H = gs.H || 460; gs.W = W;
+    let vis = gs.nodes.filter(n => !gs.hideRoles.has(n.role)); if (!vis.length) vis = gs.nodes;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of vis) { const m = n.r + 18; if (n.x - m < minX) minX = n.x - m; if (n.x + m > maxX) maxX = n.x + m; if (n.y - m < minY) minY = n.y - m; if (n.y + m > maxY) maxY = n.y + m; }
+    const gw = Math.max(1, maxX - minX), gh = Math.max(1, maxY - minY), pad = 20;
+    gs.zoom = Math.max(0.3, Math.min(2.2, Math.min((W - pad * 2) / gw, (H - pad * 2) / gh)));
+    gs.ox = (W - (minX + maxX) * gs.zoom) / 2; gs.oy = (H - (minY + maxY) * gs.zoom) / 2;
+    drawGraph();
   }
   function drawGraph() {
     const gs = graphState; if (!gs) return; const canvas = $('graph'); const dpr = window.devicePixelRatio || 1;
-    const W = canvas.clientWidth || 600, H = 460; if (gs.W !== W) gs.W = W; gs.H = H;
+    const W = canvas.clientWidth || 600, H = 460; if (W <= 0) return; if (gs.W !== W) gs.W = W; gs.H = H;
     canvas.width = W * dpr; canvas.height = H * dpr; const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, W, H); g.save(); g.translate(gs.ox, gs.oy); g.scale(gs.zoom, gs.zoom);
-    const line = cssvar('--line'), bad = cssvar('--high');
-    for (const e of gs.edges) { g.strokeStyle = e.bad ? bad : line; g.globalAlpha = e.bad ? 0.5 : 0.25; g.lineWidth = e.bad ? 1.4 : 0.7; g.beginPath(); g.moveTo(e.a.x, e.a.y); g.lineTo(e.b.x, e.b.y); g.stroke(); }
+    const line = cssvar('--line'), bad = cssvar('--high'), hov = gs.hover, hidden = gs.hideRoles;
+    // edges — thickness by volume, colour by maliciousness, arrow in the dominant flow direction
+    for (const e of gs.edges) {
+      if (hidden.has(e.a.role) || hidden.has(e.b.role)) continue;
+      const touch = hov && (e.a === hov || e.b === hov);
+      const lw = Math.max(0.6, Math.min(4.5, Math.log2(1 + e.bytes / 1024) / 2.6)) * (e.bad ? 1.3 : 1);
+      g.strokeStyle = e.bad ? bad : line;
+      g.globalAlpha = hov ? (touch ? (e.bad ? 0.95 : 0.7) : 0.06) : (e.bad ? 0.55 : 0.22);
+      g.lineWidth = lw; g.beginPath(); g.moveTo(e.a.x, e.a.y); g.lineTo(e.b.x, e.b.y); g.stroke();
+      if (gs.zoom >= 0.5 && e.bytes > 0) { let s = e.a, t = e.b; if ((e.ba || 0) > (e.ab || 0)) { s = e.b; t = e.a; } drawArrow(g, s, t, e.bad ? bad : line, lw); }
+    }
     g.globalAlpha = 1;
     for (const n of gs.nodes) {
+      if (hidden.has(n.role)) continue;
       g.beginPath(); g.arc(n.x, n.y, n.r, 0, 6.2832); g.fillStyle = cssvar(ROLE_COLOR[n.role]); g.fill();
-      if (n.sev === 'high' || n.role === 'c2') { g.lineWidth = 2; g.strokeStyle = cssvar('--high'); g.stroke(); }
+      if (n.sev === 'high' || n.role === 'c2') { g.lineWidth = 2; g.strokeStyle = bad; g.stroke(); }
       else if (!n.internal) { g.lineWidth = 1; g.strokeStyle = line; g.stroke(); }
     }
-    if (gs.hover) { const n = gs.hover; g.beginPath(); g.arc(n.x, n.y, n.r + 3, 0, 6.2832); g.strokeStyle = cssvar('--fg'); g.lineWidth = 1.5; g.stroke(); }
+    if (hov && !hidden.has(hov.role)) { g.beginPath(); g.arc(hov.x, hov.y, hov.r + 3, 0, 6.2832); g.strokeStyle = cssvar('--fg'); g.lineWidth = 1.5; g.stroke(); }
     g.restore();
+    // labels drawn in screen space so they stay legible at any zoom
+    if (gs.labels !== 'off') {
+      g.font = '600 11px ' + (cssvar('--font-mono') || 'monospace'); g.textAlign = 'center'; g.textBaseline = 'top';
+      const surf = cssvar('--surface'), fg = cssvar('--fg');
+      for (const n of gs.nodes) {
+        if (hidden.has(n.role)) continue;
+        const show = gs.labels === 'all' || n.keyLabel || n === hov; if (!show) continue;
+        const sx = n.x * gs.zoom + gs.ox, sy = n.y * gs.zoom + gs.oy + n.r * gs.zoom + 3;
+        if (sx < -60 || sx > W + 60 || sy < -16 || sy > H + 16) continue;
+        const tw = g.measureText(n.ip).width;
+        g.globalAlpha = 0.82; g.fillStyle = surf; g.fillRect(sx - tw / 2 - 3, sy - 1, tw + 6, 14);
+        g.globalAlpha = 1; g.fillStyle = fg; g.fillText(n.ip, sx, sy);
+      }
+    }
+  }
+  function drawArrow(g, s, t, color, lw) {
+    const dx = t.x - s.x, dy = t.y - s.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+    const tx = t.x - ux * (t.r + 2), ty = t.y - uy * (t.r + 2), ah = Math.max(3.5, lw * 2 + 1.5);
+    g.fillStyle = color; g.beginPath(); g.moveTo(tx, ty);
+    g.lineTo(tx - ux * ah - uy * ah * 0.55, ty - uy * ah + ux * ah * 0.55);
+    g.lineTo(tx - ux * ah + uy * ah * 0.55, ty - uy * ah - ux * ah * 0.55);
+    g.closePath(); g.fill();
   }
   function graphPt(ev) { const canvas = $('graph'); const rect = canvas.getBoundingClientRect(); const gs = graphState; const x = (ev.clientX - rect.left - gs.ox) / gs.zoom, y = (ev.clientY - rect.top - gs.oy) / gs.zoom; return { x, y, cx: ev.clientX - rect.left, cy: ev.clientY - rect.top }; }
   function nodeAt(x, y) { const gs = graphState; for (let i = gs.nodes.length - 1; i >= 0; i--) { const n = gs.nodes[i]; if ((n.x - x) ** 2 + (n.y - y) ** 2 <= (n.r + 3) ** 2) return n; } return null; }
   function bindGraph() {
     const canvas = $('graph'); if (canvas._bound) return; canvas._bound = true;
     canvas.addEventListener('pointerdown', ev => { const gs = graphState; if (!gs) return; const p = graphPt(ev); const n = nodeAt(p.x, p.y); canvas.setPointerCapture(ev.pointerId); if (n) gs.drag = { node: n, moved: false }; else gs.drag = { pan: true, x: ev.clientX, y: ev.clientY, moved: false }; });
-    canvas.addEventListener('pointermove', ev => { const gs = graphState; if (!gs) return; const p = graphPt(ev); if (gs.drag) { gs.drag.moved = true; if (gs.drag.node) { gs.drag.node.x = p.x; gs.drag.node.y = p.y; gs.drag.node.vx = gs.drag.node.vy = 0; drawGraph(); } else { gs.ox += ev.clientX - gs.drag.x; gs.oy += ev.clientY - gs.drag.y; gs.drag.x = ev.clientX; gs.drag.y = ev.clientY; drawGraph(); } return; } const n = nodeAt(p.x, p.y); gs.hover = n; const tip = $('gtip'); if (n) { tip.hidden = false; tip.innerHTML = `<b>${esc(n.ip)}</b>${n.cats.length ? '<br>' + esc(n.cats.join(', ')) : ''}<br>${A.fmtBytes(n.bytes)} · ${fmtN(n.pkts)} pkts${n.fids.length ? '<br>findings ' + n.fids.map(x => '#' + x).join(' ') : ''}`; const tx = Math.min(p.cx + 12, gs.W - 180), ty = Math.min(p.cy + 12, 420); tip.style.left = Math.max(4, tx) + 'px'; tip.style.top = ty + 'px'; canvas.style.cursor = 'pointer'; } else { tip.hidden = true; canvas.style.cursor = 'grab'; } drawGraph(); });
+    canvas.addEventListener('pointermove', ev => { const gs = graphState; if (!gs) return; const p = graphPt(ev); if (gs.drag) { gs.drag.moved = true; if (gs.drag.node) { gs.drag.node.x = p.x; gs.drag.node.y = p.y; gs.drag.node.vx = gs.drag.node.vy = 0; drawGraph(); } else { gs.ox += ev.clientX - gs.drag.x; gs.oy += ev.clientY - gs.drag.y; gs.drag.x = ev.clientX; gs.drag.y = ev.clientY; drawGraph(); } return; } const n = nodeAt(p.x, p.y); gs.hover = n; const tip = $('gtip'); if (n) { tip.hidden = false; tip.innerHTML = `<b>${esc(n.ip)}</b> &middot; ${esc(roleName(n.role))}${n.cats.length ? '<br>' + esc(n.cats.join(', ')) : ''}<br>${A.fmtBytes(n.bytes)} total &middot; ${fmtN(n.pkts)} pkts<br>&#8593; ${A.fmtBytes(n.out)} out &middot; &#8595; ${A.fmtBytes(n.inB)} in${n.fids.length ? '<br>findings ' + n.fids.map(x => '#' + x).join(' ') : ''}`; const tx = Math.min(p.cx + 12, gs.W - 180), ty = Math.min(p.cy + 12, 420); tip.style.left = Math.max(4, tx) + 'px'; tip.style.top = ty + 'px'; canvas.style.cursor = 'pointer'; } else { tip.hidden = true; canvas.style.cursor = 'grab'; } drawGraph(); });
     const end = ev => { const gs = graphState; if (!gs || !gs.drag) return; const wasNode = gs.drag.node, moved = gs.drag.moved; gs.drag = null; if (wasNode && !moved) setFilter('ip:' + wasNode.ip); };
     canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end);
     canvas.addEventListener('wheel', ev => { ev.preventDefault(); const gs = graphState; if (!gs) return; const p = graphPt(ev); const f = ev.deltaY < 0 ? 1.1 : 0.9; const nz = Math.max(0.3, Math.min(4, gs.zoom * f)); gs.ox = ev.clientX - $('graph').getBoundingClientRect().left - p.x * nz; gs.oy = ev.clientY - $('graph').getBoundingClientRect().top - p.y * nz; gs.zoom = nz; drawGraph(); }, { passive: false });
@@ -1008,15 +1110,40 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
   function drawDonut() {
     const r = state.result; const cats = r.categories.slice(0, 10); const canvas = $('donut'); const dpr = window.devicePixelRatio || 1;
     const W = canvas.clientWidth || 300, H = 220; canvas.width = W * dpr; canvas.height = H * dpr; const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const nonInfo = r.findings.filter(f => f.severity !== 'info').length;
+    if (!cats.length || nonInfo === 0) {
+      g.fillStyle = cssvar('--muted'); g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = '13px ' + cssvar('--font-ui');
+      g.fillText('No non-informational findings to chart.', W / 2, H / 2); $('donutLegend').innerHTML = ''; return;
+    }
     const total = cats.reduce((a, c) => a + c.n, 0) || 1; const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 10, r0 = R * 0.58;
     const sevColor = { high: '--high', medium: '--medium', low: '--low', info: '--info' };
     let ang = -Math.PI / 2;
     cats.forEach(c => { const a2 = ang + (c.n / total) * 6.2832; g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, R, ang, a2); g.closePath(); g.fillStyle = cssvar(sevColor[c.sev]); g.globalAlpha = 0.55 + 0.45 * (1 - ['high', 'medium', 'low', 'info'].indexOf(c.sev) / 3); g.fill(); ang = a2; });
     g.globalAlpha = 1; g.beginPath(); g.arc(cx, cy, r0, 0, 6.2832); g.fillStyle = cssvar('--surface'); g.fill();
-    g.fillStyle = cssvar('--fg'); g.textAlign = 'center'; g.font = '700 22px ' + cssvar('--font-ui'); g.fillText(String(r.findings.filter(f => f.severity !== 'info').length), cx, cy); g.font = '11px ' + cssvar('--font-ui'); g.fillStyle = cssvar('--muted'); g.fillText('findings', cx, cy + 16);
-    $('donutLegend').innerHTML = cats.map(c => `<span><i style="background:var(${sevColor[c.sev]})"></i>${esc(c.cat)} (${c.n})</span>`).join('');
+    g.fillStyle = cssvar('--fg'); g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.font = '700 22px ' + cssvar('--font-ui'); g.fillText(String(nonInfo), cx, cy); g.font = '11px ' + cssvar('--font-ui'); g.fillStyle = cssvar('--muted'); g.fillText('findings', cx, cy + 16);
+    $('donutLegend').innerHTML = cats.map(c => `<span><i style="background:var(${sevColor[c.sev]})"></i>${esc(c.cat)} (${c.n}, ${Math.round(c.n / total * 100)}%)</span>`).join('');
   }
-  let grt; window.addEventListener('resize', () => { clearTimeout(grt); grt = setTimeout(() => { if (!$('view-graph').hidden && graphState) { drawGraph(); drawDonut(); } if (!$('view-overview').hidden) drawIoGraph(); }, 150); });
+  function updateStats() {
+    const gs = graphState; if (!gs || !state.result) return; const g = state.result.graph;
+    const vis = gs.nodes.filter(n => !gs.hideRoles.has(n.role));
+    const flagged = vis.filter(n => n.sev).length, c2 = vis.filter(n => n.role === 'c2').length;
+    const visEdges = gs.edges.filter(e => !gs.hideRoles.has(e.a.role) && !gs.hideRoles.has(e.b.role)).length;
+    let s = `<span><b>${vis.length}</b> of <b>${g.totalHosts}</b> hosts</span><span><b>${visEdges}</b> links</span><span><b>${flagged}</b> flagged</span><span><b>${c2}</b> C2 / exfil</span>`;
+    if (g.truncated) s += `<span class="warn">Top ${gs.nodes.length} talkers shown; ${g.totalHosts - gs.nodes.length} more host(s) omitted</span>`;
+    if (gs.hideRoles.size) s += `<span class="warn">${gs.hideRoles.size} host type(s) hidden</span>`;
+    $('gstats').innerHTML = s;
+  }
+  function graphTable() {
+    const gs = graphState; if (!gs) return;
+    const rows = [...gs.nodes].sort((a, b) => b.bytes - a.bytes).map(n => `<tr data-ip="${esc(n.ip)}"><td class="mono">${esc(n.ip)}</td><td>${esc(roleName(n.role))}</td><td>${A.fmtBytes(n.bytes)}</td><td>${fmtN(n.pkts)}</td><td>${n.fids.length ? n.fids.map(x => '#' + x).join(' ') : '—'}</td></tr>`).join('');
+    $('gtable').innerHTML = `<table><thead><tr><th>Host</th><th>Role</th><th>Traffic</th><th>Packets</th><th>Findings</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  let grt; window.addEventListener('resize', () => { clearTimeout(grt); grt = setTimeout(() => { if (!$('view-graph').hidden && graphState) { fitGraph(); drawDonut(); } if (!$('view-overview').hidden) drawIoGraph(); }, 150); });
+  $('glegend').addEventListener('click', e => { const it = e.target.closest('.lg-item.clk'); const gs = graphState; if (!it || !gs) return; const role = it.dataset.role; if (gs.hideRoles.has(role)) gs.hideRoles.delete(role); else gs.hideRoles.add(role); legendGraph(); updateStats(); drawGraph(); });
+  $('gtable').addEventListener('click', e => { const tr = e.target.closest('tr[data-ip]'); if (tr) setFilter('ip:' + tr.dataset.ip); });
+  $('graphFit').addEventListener('click', () => { if (graphState) fitGraph(); });
+  $('graphFreeze').addEventListener('click', () => { const gs = graphState; if (!gs) return; gs.freeze = !gs.freeze; $('graphFreeze').textContent = gs.freeze ? 'Resume' : 'Freeze'; if (!gs.freeze) runGraph(); });
+  $('graphLabels').addEventListener('click', () => { const gs = graphState; if (!gs) return; const seq = ['auto', 'all', 'off']; gs.labels = seq[(seq.indexOf(gs.labels) + 1) % 3]; $('graphLabels').textContent = 'Labels: ' + gs.labels; drawGraph(); });
   $('graphPng').addEventListener('click', () => { const c = $('graph'); if (!c || !graphState) { toast('Open the Attack Map first'); return; } try { c.toBlob(blob => { if (blob) downloadBytes(blob, (settings.analyst && settings.analyst.case ? settings.analyst.case + '-' : '') + 'attack-map.png', 'image/png'); else toast('Export failed'); }); } catch (e) { toast('Export blocked in this view — use the downloaded standalone file'); } });
 
   // ---------------- timeline chart
