@@ -9,6 +9,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+- **Timeline analysis (brushable window).** The Overview tab has a packets-over-time strip you can
+  drag to select a time window. **Filter packets** scopes the Packets tab to the window live;
+  **Analyze window** re-runs every detector on only that slice, scoping findings, hosts, sessions,
+  the attack map and the report (a banner shows the active window with **Return to full capture**).
+  **Zoom to selection** rescales the strip for fine selection. The packet filter also learned
+  `after:` / `before:` tokens (seconds from capture start).
+
 ### Changed
 - **Attack chain redesigned as a horizontal timeline.** The kill-chain is now a full-width
   progressive bar: numbered, phase-coloured stage markers joined by a progress line, each with its

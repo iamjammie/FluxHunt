@@ -48,6 +48,13 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .filterbanner { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: var(--radius); padding: 6px 12px; display: flex; align-items: center; gap: 10px; font-size: 12.5px; flex-wrap: wrap; }
 .filterbanner .mono { font-weight: 600; }
 .filterbanner button { margin-left: auto; }
+.winbanner { background: var(--medium-soft); border: 1px solid var(--medium); border-radius: var(--radius); padding: 6px 12px; display: flex; align-items: center; gap: 10px; font-size: 12.5px; flex-wrap: wrap; margin-bottom: 10px; }
+.winbanner .mono { font-weight: 600; font-family: var(--font-mono); }
+.winbanner button { margin-left: auto; }
+.tlbrush { position: relative; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface-2); }
+#tlBrush { width: 100%; display: block; cursor: crosshair; touch-action: none; }
+.tl-read { margin-top: 7px; }
+.tl-read b { color: var(--fg); }
 /* demo banner */
 .demobanner { background: var(--medium-soft); color: var(--medium); border: 1px solid var(--medium); border-radius: var(--radius); padding: 8px 12px; display: flex; align-items: center; gap: 10px; font-size: 13px; flex-wrap: wrap; }
 .demobanner b { color: var(--medium); }
@@ -343,6 +350,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
       <div class="tiles" id="tiles"></div>
       <div id="warnings"></div>
     </div>
+    <div id="winBanner" class="winbanner" hidden></div>
     <div id="filterBanner" class="filterbanner" hidden></div>
     <nav class="tabs" role="tablist" id="tabs">
       <button class="tab" role="tab" data-view="report" aria-selected="false" type="button">IR Report</button>
@@ -374,6 +382,11 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 
     <div class="view" id="view-overview" hidden>
       <div class="grid2">
+        <div class="panel wide" id="tlPanel">
+          <div class="head-row"><h2>Timeline analysis</h2><div class="gtoolbar"><button class="btn small" id="tlZoomSel" type="button" title="Zoom the strip to the current selection">Zoom to selection</button><button class="btn small" id="tlReset" type="button" title="Clear the selection and zoom">Reset</button><button class="btn small" id="tlFilter" type="button" title="Scope the Packets tab to the selected window">Filter packets</button><button class="btn small" id="tlAnalyze" type="button" title="Re-run every detector on only the selected window">Analyze window</button></div></div>
+          <div class="tlbrush"><canvas id="tlBrush" height="92" role="img" aria-label="Packets-over-time strip; drag to select a window"></canvas></div>
+          <div class="tl-read hint" id="tlRead">Drag across the strip to select a time window, then filter the packets to it or re-run detection on just that window.</div>
+        </div>
         <div class="panel wide"><h2>Packets over time</h2><canvas id="timeline" height="160"></canvas><div class="hint" id="timelineHint"></div></div>
         <div class="panel wide"><h2>Throughput (bytes/s)</h2><canvas id="iograph" height="150"></canvas></div>
         <div class="panel wide"><h2>Expert info · TCP health</h2><div id="tcpHealthSummary" class="capinfo" style="margin-bottom:6px"></div><div class="scroll"><table id="tcpHealthTable"></table></div></div>
@@ -506,7 +519,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
           <dt>IR Report</dt><dd>Executive summary, attack narrative, timeline, affected assets, ATT&amp;CK coverage, technical findings, IOCs and chain of custody. Export to PDF / HTML / Markdown.</dd>
           <dt>Findings</dt><dd>Every detection, filterable by severity and category. Each links to its packets, hosts and ATT&amp;CK technique.</dd>
           <dt>Attack Map</dt><dd>Force-directed host graph: node colour = role (red = C2/exfil, orange = flagged), node size = traffic, red ring = high severity; edges are conversations (thicker = more bytes, arrow = main data direction). Use Fit/Freeze/Labels, click a legend role to hide it, or open the host table below. Alongside: the reconstructed kill-chain and a findings donut.</dd>
-          <dt>Overview</dt><dd>Timeline, throughput, protocol hierarchy, expert-info / TCP health, top talkers and conversations.</dd>
+          <dt>Overview</dt><dd>Timeline analysis (drag on the strip to select a window, then <b>Filter packets</b> to scope the Packets tab or <b>Analyze window</b> to re-run every detector on just that slice; <b>Return to full capture</b> from the banner), throughput, protocol hierarchy, expert-info / TCP health, top talkers and conversations. The packet filter also accepts <code>after:</code>/<code>before:</code> (seconds from start).</dd>
           <dt>Hosts</dt><dd>Every host; click one for a consolidated host view (findings, sessions, enrichment).</dd>
           <dt>Sessions</dt><dd>One row per connection with bytes, RTT, retransmissions and a <b>Follow Stream</b> button.</dd>
           <dt>Indicators</dt><dd>External IPs, domains, carved files, certificates, credentials, JA3/JA4/JA3S and assets — exportable as STIX, MISP, CSV, Zeek, Suricata, YARA, Sigma, OpenIOC, CEF or ATT&amp;CK Navigator.</dd>
@@ -614,7 +627,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
       else name = sources[0].name;
       status('Looking for anomalies…', true); await sleep();
       const result = A.analyze(pkts, cap, analyzeOpts());
-      state = Object.assign(state, { name, capture: cap, pkts, result, sources, sevFilter: 'all', filter: '', shown: 0, sessFilter: '', sessShown: 0, iocTab: 'ips' });
+      state = Object.assign(state, { name, capture: cap, pkts, result, sources, sevFilter: 'all', filter: '', shown: 0, sessFilter: '', sessShown: 0, iocTab: 'ips', win: null, fullResult: null, timeWin: null, tlZoom: null, brush: null });
       state.sevOf = new Map();
       const order = { high: 0, medium: 1, low: 2, info: 3 };
       for (const f of result.findings) for (const pn of f.packets) { const cur = state.sevOf.get(pn); if (!cur || order[f.severity] < order[cur]) state.sevOf.set(pn, f.severity); }
@@ -658,7 +671,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     if (!VIEWS.includes(v)) v = 'findings';
     for (const b of document.querySelectorAll('.tab')) b.setAttribute('aria-selected', b.dataset.view === v ? 'true' : 'false');
     for (const el of document.querySelectorAll('.view')) el.hidden = el.id !== 'view-' + v;
-    if (v === 'overview') { drawTimeline(); drawIoGraph(); }
+    if (v === 'overview') { drawBrush(); drawTimeline(); drawIoGraph(); updateTlRead(); }
     if (v === 'graph') renderGraphView();
     settings.lastView = v; saveSettings();
     if (location.hash.slice(1) !== v) { try { history.replaceState(null, '', '#' + v); } catch (e) { location.hash = v; } }
@@ -688,6 +701,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     renderIocs();
     $('filter').value = ''; state.filter = ''; applyFilter();
     updateDemoBanner();
+    updateWinBanner();
     const keep = render._keep; render._keep = false;
     const hashV = location.hash.slice(1);
     const cur = keep ? ((document.querySelector('.tab[aria-selected="true"]') || {}).dataset || {}).view : (VIEWS.includes(hashV) ? hashV : null);
@@ -1244,14 +1258,90 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
     const xt = Math.min(6, tl.length);
     for (let i = 0; i <= xt; i++) { const t = r.summary.duration * i / xt; const x = padL + iw * i / xt; g.fillText('+' + fmtDur(t), Math.min(W - 30, Math.max(padL + 14, x)), H - 7); }
   }
-  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (!$('view-overview').hidden) drawTimeline(); }, 120); });
+  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (!$('view-overview').hidden) { drawBrush(); drawTimeline(); } }, 120); });
+
+  // ---------------- timeline analysis (brushable window + windowed re-analysis)
+  const hhmmss = t => { const d = new Date(t * 1000); return isNaN(d) ? '—' : d.toISOString().slice(11, 19); };
+  function capBounds() { const n = state.pkts && state.pkts.length; if (!n) return null; return { t0: state.pkts[0].ts, t1: state.pkts[n - 1].ts }; }
+  function countInWin(t0, t1) { let c = 0; for (const p of state.pkts) if (p.ts >= t0 && p.ts <= t1) c++; return c; }
+  function drawBrush() {
+    const c = $('tlBrush'); const cb = capBounds(); if (!c || !cb) return;
+    const dpr = window.devicePixelRatio || 1; const W = c.clientWidth || 600, H = 92; if (W <= 0) return;
+    c.width = W * dpr; c.height = H * dpr; const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const z = state.tlZoom || cb; const span = Math.max(1e-6, z.t1 - z.t0); const h0 = H - 16;
+    const bins = Math.max(24, Math.min(320, Math.floor(W / 3))); const hist = new Array(bins).fill(0);
+    for (const p of state.pkts) { if (p.ts < z.t0 || p.ts > z.t1) continue; let b = Math.floor((p.ts - z.t0) / span * bins); if (b >= bins) b = bins - 1; if (b < 0) b = 0; hist[b]++; }
+    const max = Math.max(1, ...hist); const bw = W / bins;
+    g.fillStyle = cssvar('--accent'); g.globalAlpha = 0.65;
+    for (let i = 0; i < bins; i++) { const bh = hist[i] / max * (h0 - 6); if (bh > 0) g.fillRect(i * bw, h0 - bh, Math.max(1, bw - 0.5), bh); }
+    g.globalAlpha = 1; g.strokeStyle = cssvar('--line'); g.beginPath(); g.moveTo(0, h0 + 0.5); g.lineTo(W, h0 + 0.5); g.stroke();
+    g.fillStyle = cssvar('--muted'); g.font = '10px ' + cssvar('--font-mono'); g.textBaseline = 'bottom';
+    g.textAlign = 'left'; g.fillText(hhmmss(z.t0), 2, H - 2); g.textAlign = 'right'; g.fillText(hhmmss(z.t1), W - 2, H - 2);
+    g.textAlign = 'center'; g.fillText('peak ' + max + ' pkt', W / 2, H - 2);
+    const sel = state.brush;
+    if (sel) {
+      const x0 = Math.max(0, (sel.t0 - z.t0) / span * W), x1 = Math.min(W, (sel.t1 - z.t0) / span * W);
+      g.fillStyle = cssvar('--accent'); g.globalAlpha = 0.18; g.fillRect(x0, 0, x1 - x0, h0); g.globalAlpha = 1;
+      g.strokeStyle = cssvar('--accent'); g.lineWidth = 1.5; g.strokeRect(x0 + 0.5, 0.5, Math.max(1, x1 - x0 - 1), h0 - 1);
+      g.fillStyle = cssvar('--accent'); g.fillRect(x0 - 1, 0, 3, h0); g.fillRect(x1 - 2, 0, 3, h0);
+    }
+    if (state.win) { const x0 = (state.win.t0 - z.t0) / span * W, x1 = (state.win.t1 - z.t0) / span * W; g.strokeStyle = cssvar('--medium'); g.setLineDash([4, 3]); g.lineWidth = 1.5; g.strokeRect(Math.max(0, x0) + 0.5, 0.5, Math.min(W, x1) - Math.max(0, x0) - 1, h0 - 1); g.setLineDash([]); }
+  }
+  function updateTlRead() {
+    const el = $('tlRead'); if (!el) return; const cb = capBounds(); const s = state.brush;
+    if (!s) { el.innerHTML = 'Drag across the strip to select a time window, then <b>Filter packets</b> to scope the Packets tab or <b>Analyze window</b> to re-run detection on just that window.' + (state.win ? ' <b>Windowed analysis is active.</b>' : ''); return; }
+    const n = countInWin(s.t0, s.t1); const relS = s.t0 - cb.t0, relE = s.t1 - cb.t0;
+    el.innerHTML = `Selected <b><span class="mono">${hhmmss(s.t0)}–${hhmmss(s.t1)}</span></b> · ${fmtDur(s.t1 - s.t0)} · <b>${fmtN(n)}</b> packet(s) · <span class="mono">+${relS.toFixed(1)}s→+${relE.toFixed(1)}s</span>`;
+  }
+  function brushTsAt(clientX) { const c = $('tlBrush'); const r = c.getBoundingClientRect(); const cb = capBounds(); const z = state.tlZoom || cb; const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width)); return z.t0 + f * (z.t1 - z.t0); }
+  (function bindBrush() {
+    const c = $('tlBrush'); let anchor = null;
+    c.addEventListener('pointerdown', e => { if (!capBounds()) return; c.setPointerCapture(e.pointerId); anchor = brushTsAt(e.clientX); state.brush = { t0: anchor, t1: anchor }; drawBrush(); updateTlRead(); });
+    c.addEventListener('pointermove', e => { if (anchor == null) return; const t = brushTsAt(e.clientX); state.brush = { t0: Math.min(anchor, t), t1: Math.max(anchor, t) }; drawBrush(); updateTlRead(); });
+    const end = () => { if (anchor == null) return; anchor = null; if (state.brush && state.brush.t1 - state.brush.t0 < 1e-4) state.brush = null; drawBrush(); updateTlRead(); };
+    c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
+  })();
+  $('tlZoomSel').addEventListener('click', () => { if (!state.brush) { toast('Drag to select a window first'); return; } state.tlZoom = { t0: state.brush.t0, t1: state.brush.t1 }; state.brush = null; drawBrush(); updateTlRead(); });
+  $('tlReset').addEventListener('click', () => { state.tlZoom = null; state.brush = null; drawBrush(); updateTlRead(); });
+  $('tlFilter').addEventListener('click', () => { if (!state.brush) { toast('Drag to select a window first'); return; } state.timeWin = { t0: state.brush.t0, t1: state.brush.t1 }; applyFilter(); showView('packets'); window.scrollTo({ top: 0 }); toast('Packets scoped to the selected window'); });
+  $('tlAnalyze').addEventListener('click', analyzeWindow);
+  function analyzeWindow() {
+    if (!state.brush) { toast('Drag to select a window first'); return; }
+    const { t0, t1 } = state.brush; const sub = state.pkts.filter(p => p.ts >= t0 && p.ts <= t1);
+    if (sub.length < 2) { toast('That window has too few packets to analyse'); return; }
+    if (!state.fullResult) state.fullResult = state.result;
+    status('Analysing window (' + fmtN(sub.length) + ' packets)…', true);
+    setTimeout(() => {
+      state.win = { t0, t1}; state.timeWin = null;
+      state.result = A.analyze(sub, state.capture, analyzeOpts());
+      state.report = null; state.sevFilter = 'all'; state.catFilter = '';
+      state.sevOf = new Map(); const order = { high: 0, medium: 1, low: 2, info: 3 };
+      for (const f of state.result.findings) for (const pn of f.packets) { const cur = state.sevOf.get(pn); if (!cur || order[f.severity] < order[cur]) state.sevOf.set(pn, f.severity); }
+      render._keep = true; render();
+      status('Windowed analysis: ' + fmtN(sub.length) + ' packets, ' + state.result.findings.length + ' finding' + (state.result.findings.length === 1 ? '' : 's') + '.');
+    }, 0);
+  }
+  function exitWindow() {
+    if (!state.fullResult) return;
+    state.result = state.fullResult; state.fullResult = null; state.win = null; state.report = null;
+    state.sevOf = new Map(); const order = { high: 0, medium: 1, low: 2, info: 3 };
+    for (const f of state.result.findings) for (const pn of f.packets) { const cur = state.sevOf.get(pn); if (!cur || order[f.severity] < order[cur]) state.sevOf.set(pn, f.severity); }
+    state.sevFilter = 'all'; state.catFilter = ''; render._keep = true; render();
+    status('Returned to full-capture analysis.');
+  }
+  function updateWinBanner() {
+    const b = $('winBanner'); if (!b) return;
+    if (!state.win || !state.result) { b.hidden = true; return; }
+    b.hidden = false; b.innerHTML = `<span><b>Windowed analysis</b> <span class="mono">${hhmmss(state.win.t0)}–${hhmmss(state.win.t1)}</span></span> <span class="muted">· ${fmtDur(state.win.t1 - state.win.t0)} · ${fmtN(state.result.summary.packets)} packets · every tab is scoped to this window</span><button class="btn small" id="winExit" type="button">Return to full capture</button>`;
+  }
+  $('winBanner').addEventListener('click', e => { if (e.target.id === 'winExit') exitWindow(); });
 
   // ---------------- packet table
   function parseFilter(q) {
     return q.trim().split(/\s+/).filter(Boolean).map(tok => {
       let neg = false; if (tok.startsWith('!')) { neg = true; tok = tok.slice(1); }
-      const m = /^(ip|src|dst|port|proto|n):(.+)$/i.exec(tok);
-      if (m) { const k = m[1].toLowerCase(), v = m[2].toLowerCase(); return { neg, k, v, set: k === 'n' ? new Set(v.split(',').map(Number)) : null }; }
+      const m = /^(ip|src|dst|port|proto|n|after|before):(.+)$/i.exec(tok);
+      if (m) { const k = m[1].toLowerCase(), v = m[2].toLowerCase(); return { neg, k, v, set: k === 'n' ? new Set(v.split(',').map(Number)) : null, num: (k === 'after' || k === 'before') ? parseFloat(v) : null }; }
       return { neg, k: 'text', v: tok.toLowerCase() };
     });
   }
@@ -1264,6 +1354,8 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
       else if (t.k === 'port') { const l4 = p.tcp || p.udp; const n = +t.v; ok = !!l4 && (l4.sport === n || l4.dport === n); }
       else if (t.k === 'proto') ok = p.proto.toLowerCase() === t.v || (p.tcp && t.v === 'tcp') || (p.udp && t.v === 'udp') || (p.ip && t.v === 'ip') || (p.icmp && t.v.startsWith('icmp'));
       else if (t.k === 'n') ok = t.set.has(p.n);
+      else if (t.k === 'after') ok = (p.ts - (state.result ? state.result.summary.start : 0)) >= t.num;
+      else if (t.k === 'before') ok = (p.ts - (state.result ? state.result.summary.start : 0)) <= t.num;
       else ok = (p.proto + ' ' + p.src + ' ' + p.dst + ' ' + p.info).toLowerCase().includes(t.v);
       if (t.neg ? ok : !ok) return false;
     }
@@ -1271,17 +1363,22 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
   }
   function applyFilter() {
     const terms = parseFilter(state.filter);
-    state.filtered = terms.length ? state.pkts.filter(p => matches(p, terms)) : state.pkts;
+    let base = terms.length ? state.pkts.filter(p => matches(p, terms)) : state.pkts;
+    if (state.timeWin) base = base.filter(p => p.ts >= state.timeWin.t0 && p.ts <= state.timeWin.t1);
+    state.filtered = base;
     state.shown = 0;
     $('pktTable').innerHTML = '<thead><tr><th class="num">No.</th><th class="num">Time</th><th>Source</th><th>Destination</th><th>Proto</th><th class="num">Len</th><th>Info</th></tr></thead><tbody></tbody>';
     renderMore();
     updateFilterBanner();
   }
   function updateFilterBanner() {
-    const b = $('filterBanner'); if (!state.result || !state.filter) { b.hidden = true; return; }
-    b.hidden = false; b.innerHTML = `<span>Active packet filter</span> <span class="mono">${esc(state.filter)}</span> <span class="muted">· ${fmtN(state.filtered.length)} packet(s)</span><button class="btn small" id="clearFilterBanner" type="button">Clear filter</button>`;
+    const b = $('filterBanner'); if (!state.result || (!state.filter && !state.timeWin)) { b.hidden = true; return; }
+    const bits = [];
+    if (state.filter) bits.push(`<span class="mono">${esc(state.filter)}</span>`);
+    if (state.timeWin) bits.push(`<span class="mono">window ${hhmmss(state.timeWin.t0)}–${hhmmss(state.timeWin.t1)}</span>`);
+    b.hidden = false; b.innerHTML = `<span>Active packet filter</span> ${bits.join(' <span class="muted">+</span> ')} <span class="muted">· ${fmtN(state.filtered.length)} packet(s)</span><button class="btn small" id="clearFilterBanner" type="button">Clear filter</button>`;
   }
-  $('filterBanner').addEventListener('click', e => { if (e.target.id === 'clearFilterBanner') setFilter(''); });
+  $('filterBanner').addEventListener('click', e => { if (e.target.id === 'clearFilterBanner') { state.timeWin = null; state.brush = null; if (!$('view-overview').hidden) drawBrush(); setFilter(''); } });
   function renderMore() {
     const tb = $('pktTable').querySelector('tbody'); const start = state.shown, end = Math.min(state.filtered.length, start + 150);
     const t0 = state.result.summary.start; let html = '';
@@ -1362,7 +1459,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
   for (const id of ['anName', 'anOrg', 'anCase', 'anTlp']) $(id).addEventListener('input', () => { const k = { anName: 'name', anOrg: 'org', anCase: 'case', anTlp: 'tlp' }[id]; settings.analyst[k] = $(id).value; saveSettings(); if (state.result && !$('view-report').hidden) renderReport(); });
   $('setSens').addEventListener('change', () => { settings.sensitivity = $('setSens').value; $('sens').value = settings.sensitivity; saveSettings(); reanalyze(); });
   function applyPalette() { if (settings.cbPalette) document.documentElement.setAttribute('data-cb', '1'); else document.documentElement.removeAttribute('data-cb'); }
-  $('cbPalette').addEventListener('change', () => { settings.cbPalette = $('cbPalette').checked; saveSettings(); applyPalette(); if (!$('view-graph').hidden && graphState) { drawGraph(); drawDonut(); } if (!$('view-overview').hidden) { drawTimeline(); drawIoGraph(); } });
+  $('cbPalette').addEventListener('change', () => { settings.cbPalette = $('cbPalette').checked; saveSettings(); applyPalette(); if (!$('view-graph').hidden && graphState) { drawGraph(); drawDonut(); } if (!$("view-overview").hidden) { drawBrush(); drawTimeline(); drawIoGraph(); } });
   $('catToggles').addEventListener('change', e => { const cb = e.target.closest('input[data-cat]'); if (!cb) return; const c = cb.dataset.cat; settings.disabled = ALL_CATS.filter(x => { const el = $('catToggles').querySelector(`input[data-cat="${CSS.escape(x)}"]`); return el && !el.checked; }); saveSettings(); reanalyze('Applying detector settings…'); });
   let iocT; $('iocWatch').addEventListener('input', () => { settings.iocText = $('iocWatch').value; saveSettings(); clearTimeout(iocT); iocT = setTimeout(() => reanalyze('Matching watchlist…'), 600); });
   let alT; $('allowList').addEventListener('input', () => { settings.allowText = $('allowList').value; saveSettings(); clearTimeout(alT); alT = setTimeout(() => reanalyze('Applying allowlist…'), 600); });
@@ -1377,7 +1474,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
   $('demoOpen').addEventListener('click', () => $('file').click());
 
   // ---------------- theme + density + help
-  function redrawVisuals() { if (!state.result) return; if (!$('view-graph').hidden && graphState) { drawGraph(); drawDonut(); } if (!$('view-overview').hidden) { drawTimeline(); drawIoGraph(); } }
+  function redrawVisuals() { if (!state.result) return; if (!$('view-graph').hidden && graphState) { drawGraph(); drawDonut(); } if (!$("view-overview").hidden) { drawBrush(); drawTimeline(); drawIoGraph(); } }
   const themeGlyph = () => settings.theme === 'light' ? '☀' : settings.theme === 'dark' ? '☾' : '◐';
   $('themeBtn').addEventListener('click', () => { const o = ['system', 'light', 'dark']; settings.theme = o[(o.indexOf(settings.theme) + 1) % 3]; saveSettings(); applyTheme(); $('themeBtn').textContent = themeGlyph(); setTimeout(redrawVisuals, 30); });
   function openHelp() { $('aboutLine').textContent = 'FluxHunt ' + A.VERSION + ' — a fully offline, single-file PCAP threat-hunting and incident-response tool. All analysis runs locally in your browser; nothing is uploaded.'; $('helpModal').hidden = false; }
