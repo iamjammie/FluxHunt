@@ -333,6 +333,18 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 #objTable td.mono { font-family: var(--font-mono); }
 #objTable tr.danger td:first-child { box-shadow: inset 3px 0 0 var(--high); }
 #objTable .objbtn { white-space: nowrap; }
+/* packet notes + colouring rules */
+.pktnote { font-size: 11px; cursor: help; }
+.pktcmt { margin-top: 10px; display: grid; gap: 4px; }
+.pktcmt label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; }
+.pktcmt textarea { width: 100%; border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--radius); padding: 6px 9px; font-size: 12.5px; font-family: inherit; resize: vertical; color: var(--fg); }
+.crule { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.crule .sw { width: 13px; height: 13px; border-radius: 3px; }
+.crule .rf { font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crule button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; }
+.crule-add { display: grid; grid-template-columns: 1fr 96px auto; gap: 8px; margin-top: 8px; }
+.crule-add input, .crule-add select { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--radius); padding: 6px 8px; font-size: 12.5px; color: var(--fg); }
+.crule-add input { font-family: var(--font-mono); }
 
 /* settings / modal */
 .modal { position: fixed; inset: 0; background: rgba(10,16,20,.55); display: flex; align-items: flex-start; justify-content: center; padding: max(24px, env(safe-area-inset-top)) 16px 24px; z-index: 50; overflow-y: auto; }
@@ -526,7 +538,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
 
     <div class="view" id="view-packets" hidden>
       <div class="filterbar">
-        <input id="filter" placeholder="Filter packets… e.g. ip:10.0.0.5 port:443" autocomplete="off" spellcheck="false">
+        <input id="filter" placeholder="Filter… ip:10.0.0.5 port:443 · proto:dns · matches:\.exe · port:1-1024 · a || b · !proto:tcp" autocomplete="off" spellcheck="false">
         <button class="btn small" id="clearFilter" type="button">Clear</button>
         <button class="btn small" id="pcapOut" type="button">Save as .pcap</button>
         <button class="btn small" id="pcapAnon" type="button">Save anonymized .pcap</button>
@@ -567,6 +579,11 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
         <div class="setrow"><label for="setTheme">Theme</label><select id="setTheme"><option value="system">Match system</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
         <div class="setrow"><label for="setDensity">Density</label><select id="setDensity"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></div>
       </section>
+      <section class="setgrp"><h3>Packet colouring rules</h3>
+        <p class="hint" style="flex-basis:auto">Highlight packets in the Packets tab whose fields match a filter (first match wins). Same grammar as the packet filter — e.g. <code>port:4444</code>, <code>proto:dns</code>, <code>matches:\.exe</code>, <code>ip:10.0.0.5 || proto:icmp</code>.</p>
+        <div id="colorRulesList"></div>
+        <div class="crule-add"><input id="crFilter" placeholder="filter expression" autocomplete="off" spellcheck="false"><select id="crColor"><option value="red">Red</option><option value="orange">Orange</option><option value="yellow">Yellow</option><option value="green">Green</option><option value="blue">Blue</option><option value="purple">Purple</option><option value="cyan">Cyan</option><option value="pink">Pink</option></select><button class="btn small" id="crAdd" type="button">Add rule</button></div>
+      </section>
       <section class="setgrp"><h3>Workspace lock</h3>
         <p class="hint" style="flex-basis:auto">An optional passphrase that hides the workspace behind a prompt on this device. This is a privacy screen, <strong>not real authentication</strong>: the capture is processed entirely in your browser and a determined local user can bypass it. True multi-user sign-in and role-based admin need the server deployment (see the report footer note).</p>
         <div class="setrow"><label for="lockPass">Passphrase</label><input id="lockPass" type="password" placeholder="leave blank to disable" autocomplete="new-password"></div>
@@ -599,7 +616,7 @@ footer .gutter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: cen
           <dt>Hosts</dt><dd>Every host; click one for a consolidated host view (findings, sessions, enrichment).</dd>
           <dt>Sessions</dt><dd>One row per connection with bytes, RTT, retransmissions and a <b>Follow Stream</b> button.</dd>
           <dt>Indicators</dt><dd>External IPs, domains, carved files, certificates, credentials, JA3/JA4/JA3S and assets — exportable as STIX, MISP, CSV, Zeek, Suricata, YARA, Sigma, OpenIOC, CEF or ATT&amp;CK Navigator.</dd>
-          <dt>Packets</dt><dd>Filterable packet list with full decode, hex, and <code>.pcap</code> / anonymised-<code>.pcap</code> / CSV export.</dd>
+          <dt>Packets</dt><dd>Filterable packet list with full decode, hex, and <code>.pcap</code> / anonymised-<code>.pcap</code> / CSV export. Filter grammar: <code>ip: src: dst: port:(N or LO-HI) proto: n: after: before: contains: matches:(regex)</code>, combined with space/<code>&amp;&amp;</code> (AND), <code>||</code>/<code>or</code> (OR) and <code>!</code> (NOT). Click a packet to expand its decode and add an analyst note (saved in the case package). Define colour-highlight rules in Settings.</dd>
         </dl>
       </section>
       <section class="setgrp"><h3>Reading findings honestly</h3>
@@ -2865,12 +2882,12 @@ const FluxHunt = (function () {
   const relTs = t => { const r = state.result; return isFinite(t) && r ? '+' + (t - r.summary.start).toFixed(2) + ' s' : '—'; };
   const fmtOffsetUI = s => { s = Math.max(0, s); return s < 120 ? '+' + s.toFixed(1) + 's' : s < 7200 ? '+' + (s / 60).toFixed(1) + 'm' : '+' + (s / 3600).toFixed(2) + 'h'; };
 
-  let state = { name: null, capture: null, pkts: [], result: null, sevFilter: 'all', catFilter: '', filter: '', shown: 0, filtered: [], sevOf: new Map(), sessFilter: '', sessSort: 'start', sessShown: 0, sessRows: [], iocTab: 'ips' };
+  let state = { name: null, capture: null, pkts: [], result: null, sevFilter: 'all', catFilter: '', filter: '', shown: 0, filtered: [], sevOf: new Map(), sessFilter: '', sessSort: 'start', sessShown: 0, sessRows: [], iocTab: 'ips', comments: new Map() };
 
   // ---------------- settings / analyst / admin (persisted locally; honestly not a security boundary)
   const ALL_CATS = ['Reconnaissance', 'Denial of service', 'Spoofing', 'Covert channel', 'Command and control', 'Malware delivery', 'Lateral movement', 'Credential access', 'Credential attack', 'Cleartext credentials', 'Suspicious TLS', 'Suspicious connection', 'Data exfiltration', 'Infrastructure', 'Evasion', 'Traffic anomaly', 'Integrity'];
   const textareaCss = 'width:100%;border:1px solid var(--line);background:var(--surface-2);border-radius:var(--radius);padding:7px 9px;font-size:12.5px;font-family:var(--font-mono);resize:vertical';
-  let settings = { analyst: { name: '', org: '', case: '', tlp: 'TLP:AMBER' }, sensitivity: 'normal', disabled: [], lock: null, allowText: '', iocText: '', cbPalette: false, decodeAsText: '', theme: 'system', density: 'comfortable', lastView: null, demoDismissed: false };
+  let settings = { analyst: { name: '', org: '', case: '', tlp: 'TLP:AMBER' }, sensitivity: 'normal', disabled: [], lock: null, allowText: '', iocText: '', cbPalette: false, decodeAsText: '', theme: 'system', density: 'comfortable', lastView: null, demoDismissed: false, colorRules: [] };
   function applyTheme() { const t = settings.theme; if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme'); if (settings.density === 'compact') document.documentElement.setAttribute('data-density', 'compact'); else document.documentElement.removeAttribute('data-density'); }
   function parseDecodeAs(text) { const m = {}; for (const line of (text || '').split(/[\n,;]+/)) { const mm = /^\s*(\d{1,5})\s*=\s*(http|tls|dns)\s*$/i.exec(line); if (mm) m[+mm[1]] = mm[2].toLowerCase(); } return m; }
   function parseIndicators(text) {
@@ -2917,7 +2934,7 @@ const FluxHunt = (function () {
       else name = sources[0].name;
       status('Looking for anomalies…', true); await sleep();
       const result = A.analyze(pkts, cap, analyzeOpts());
-      state = Object.assign(state, { name, capture: cap, pkts, result, sources, sevFilter: 'all', filter: '', shown: 0, sessFilter: '', sessShown: 0, iocTab: 'ips', win: null, fullResult: null, timeWin: null, tlZoom: null, brush: null, report: null });
+      state = Object.assign(state, { name, capture: cap, pkts, result, sources, sevFilter: 'all', filter: '', shown: 0, sessFilter: '', sessShown: 0, iocTab: 'ips', win: null, fullResult: null, timeWin: null, tlZoom: null, brush: null, report: null, comments: new Map() });
       state.sevOf = new Map();
       const order = { high: 0, medium: 1, low: 2, info: 3 };
       for (const f of result.findings) for (const pn of f.packets) { const cur = state.sevOf.get(pn); if (!cur || order[f.severity] < order[cur]) state.sevOf.set(pn, f.severity); }
@@ -3709,33 +3726,48 @@ const FluxHunt = (function () {
   $('winBanner').addEventListener('click', e => { if (e.target.id === 'winExit') exitWindow(); });
 
   // ---------------- packet table
-  function parseFilter(q) {
-    return q.trim().split(/\s+/).filter(Boolean).map(tok => {
-      let neg = false; if (tok.startsWith('!')) { neg = true; tok = tok.slice(1); }
-      const m = /^(ip|src|dst|port|proto|n|after|before):(.+)$/i.exec(tok);
-      if (m) { const k = m[1].toLowerCase(), v = m[2].toLowerCase(); return { neg, k, v, set: k === 'n' ? new Set(v.split(',').map(Number)) : null, num: (k === 'after' || k === 'before') ? parseFloat(v) : null }; }
-      return { neg, k: 'text', v: tok.toLowerCase() };
-    });
-  }
-  function matches(p, terms) {
-    for (const t of terms) {
-      let ok;
-      if (t.k === 'ip') ok = p.src.toLowerCase() === t.v || p.dst.toLowerCase() === t.v;
-      else if (t.k === 'src') ok = p.src.toLowerCase() === t.v;
-      else if (t.k === 'dst') ok = p.dst.toLowerCase() === t.v;
-      else if (t.k === 'port') { const l4 = p.tcp || p.udp; const n = +t.v; ok = !!l4 && (l4.sport === n || l4.dport === n); }
-      else if (t.k === 'proto') ok = p.proto.toLowerCase() === t.v || (p.tcp && t.v === 'tcp') || (p.udp && t.v === 'udp') || (p.ip && t.v === 'ip') || (p.icmp && t.v.startsWith('icmp'));
-      else if (t.k === 'n') ok = t.set.has(p.n);
-      else if (t.k === 'after') ok = (p.ts - (state.result ? state.result.summary.start : 0)) >= t.num;
-      else if (t.k === 'before') ok = (p.ts - (state.result ? state.result.summary.start : 0)) <= t.num;
-      else ok = (p.proto + ' ' + p.src + ' ' + p.dst + ' ' + p.info).toLowerCase().includes(t.v);
-      if (t.neg ? ok : !ok) return false;
+  // packet-filter grammar: space / && = AND, || or "or" = OR (across groups),
+  // ! negates a term. Tokens: ip:/src:/dst:/port:(N or LO-HI)/proto:/n:/after:/before:/contains:/matches:(regex)
+  function parseTerm(tok) {
+    let neg = false; if (tok.startsWith('!')) { neg = true; tok = tok.slice(1); }
+    const m = /^(ip|src|dst|port|proto|n|after|before|contains|matches|regex):(.+)$/i.exec(tok);
+    if (m) {
+      const k = m[1].toLowerCase(); const v = m[2]; const lv = v.toLowerCase();
+      if (k === 'n') return { neg, k, set: new Set(v.split(',').map(Number)) };
+      if (k === 'after' || k === 'before') return { neg, k, num: parseFloat(v) };
+      if (k === 'port') { const rm = /^(\d+)-(\d+)$/.exec(v); return rm ? { neg, k, lo: +rm[1], hi: +rm[2] } : { neg, k, v: +v }; }
+      if (k === 'matches' || k === 'regex') { let re = null; try { re = new RegExp(v, 'i'); } catch (e) { } return { neg, k: 'matches', re }; }
+      return { neg, k: k === 'contains' ? 'text' : k, v: lv };
     }
-    return true;
+    return { neg, k: 'text', v: tok.toLowerCase() };
+  }
+  function parseFilter(q) {
+    q = (q || '').trim(); if (!q) return { groups: [] };
+    const groups = q.split(/\s*\|\|\s*|\s+or\s+/i).map(part => part.replace(/\s*&&\s*/g, ' ').trim().split(/\s+/).filter(Boolean).map(parseTerm)).filter(g => g.length);
+    return { groups };
+  }
+  function matchTerm(p, t) {
+    let ok;
+    if (t.k === 'ip') ok = p.src.toLowerCase() === t.v || p.dst.toLowerCase() === t.v;
+    else if (t.k === 'src') ok = p.src.toLowerCase() === t.v;
+    else if (t.k === 'dst') ok = p.dst.toLowerCase() === t.v;
+    else if (t.k === 'port') { const l4 = p.tcp || p.udp; if (!l4) ok = false; else if (t.lo != null) ok = (l4.sport >= t.lo && l4.sport <= t.hi) || (l4.dport >= t.lo && l4.dport <= t.hi); else ok = l4.sport === t.v || l4.dport === t.v; }
+    else if (t.k === 'proto') ok = p.proto.toLowerCase() === t.v || (p.tcp && t.v === 'tcp') || (p.udp && t.v === 'udp') || (p.ip && t.v === 'ip') || (p.icmp && t.v.startsWith('icmp'));
+    else if (t.k === 'n') ok = t.set.has(p.n);
+    else if (t.k === 'after') ok = (p.ts - (state.result ? state.result.summary.start : 0)) >= t.num;
+    else if (t.k === 'before') ok = (p.ts - (state.result ? state.result.summary.start : 0)) <= t.num;
+    else if (t.k === 'matches') ok = t.re ? t.re.test(p.proto + ' ' + p.src + ' ' + p.dst + ' ' + p.info) : false;
+    else ok = (p.proto + ' ' + p.src + ' ' + p.dst + ' ' + p.info).toLowerCase().includes(t.v);
+    return t.neg ? !ok : ok;
+  }
+  function matches(p, parsed) {
+    if (!parsed.groups || !parsed.groups.length) return true;
+    for (const g of parsed.groups) { let all = true; for (const t of g) if (!matchTerm(p, t)) { all = false; break; } if (all) return true; }
+    return false;
   }
   function applyFilter() {
-    const terms = parseFilter(state.filter);
-    let base = terms.length ? state.pkts.filter(p => matches(p, terms)) : state.pkts;
+    const parsed = parseFilter(state.filter);
+    let base = parsed.groups.length ? state.pkts.filter(p => matches(p, parsed)) : state.pkts;
     if (state.timeWin) base = base.filter(p => p.ts >= state.timeWin.t0 && p.ts <= state.timeWin.t1);
     state.filtered = base;
     state.shown = 0;
@@ -3751,10 +3783,18 @@ const FluxHunt = (function () {
     b.hidden = false; b.innerHTML = `<span>Active packet filter</span> ${bits.join(' <span class="muted">+</span> ')} <span class="muted">· ${fmtN(state.filtered.length)} packet(s)</span><button class="btn small" id="clearFilterBanner" type="button">Clear filter</button>`;
   }
   $('filterBanner').addEventListener('click', e => { if (e.target.id === 'clearFilterBanner') { state.timeWin = null; state.brush = null; if (!$('view-overview').hidden) drawBrush(); setFilter(''); } });
+  const RULE_COLORS = { red: '#e5484d', orange: '#e8820a', yellow: '#d4a000', green: '#30a46c', blue: '#3b82f6', purple: '#8b5cf6', cyan: '#0bb5c3', pink: '#e93d82' };
+  function activeColorRules() { return (settings.colorRules || []).map(r => ({ color: RULE_COLORS[r.color] || r.color, parsed: parseFilter(r.filter) })).filter(r => r.parsed.groups.length); }
   function renderMore() {
     const tb = $('pktTable').querySelector('tbody'); const start = state.shown, end = Math.min(state.filtered.length, start + 150);
-    const t0 = state.result.summary.start; let html = '';
-    for (let i = start; i < end; i++) { const p = state.filtered[i]; const sv = state.sevOf.get(p.n) || ''; html += `<tr class="${sv}" data-n="${p.n}" tabindex="0"><td class="num mono">${p.n}</td><td class="num mono">${(p.ts - t0).toFixed(4)}</td><td class="mono">${esc(p.src)}</td><td class="mono">${esc(p.dst)}</td><td>${esc(p.proto)}</td><td class="num mono">${p.len}</td><td class="info">${esc(p.info)}</td></tr>`; }
+    const t0 = state.result.summary.start; let html = ''; const rules = activeColorRules();
+    for (let i = start; i < end; i++) {
+      const p = state.filtered[i]; const sv = state.sevOf.get(p.n) || '';
+      let style = '';
+      for (const r of rules) { if (matches(p, r.parsed)) { style = ` style="background:${r.color}22;box-shadow:inset 3px 0 0 ${r.color}"`; break; } }
+      const note = state.comments.get(p.n); const mark = note ? ` <span class="pktnote" title="${esc(note)}">💬</span>` : '';
+      html += `<tr class="${sv}" data-n="${p.n}" tabindex="0"${style}><td class="num mono">${p.n}${mark}</td><td class="num mono">${(p.ts - t0).toFixed(4)}</td><td class="mono">${esc(p.src)}</td><td class="mono">${esc(p.dst)}</td><td>${esc(p.proto)}</td><td class="num mono">${p.len}</td><td class="info">${esc(p.info)}</td></tr>`;
+    }
     tb.insertAdjacentHTML('beforeend', html); state.shown = end;
     const left = state.filtered.length - end;
     $('pktMore').innerHTML = state.filtered.length ? `<div class="filterbar"><span class="hint" style="flex-basis:auto">Showing ${fmtN(end)} of ${fmtN(state.filtered.length)} matching packets.</span>${left > 0 ? '<button type="button" class="btn small" id="moreBtn">Show ' + fmtN(Math.min(150, left)) + ' more</button>' : ''}</div>` : '<div class="none">No packets match this filter.</div>';
@@ -3789,10 +3829,18 @@ const FluxHunt = (function () {
     const n = Math.min(raw.length, 160);
     for (let i = 0; i < n; i += 16) { let h = '', a = ''; for (let j = i; j < Math.min(n, i + 16); j++) { h += raw[j].toString(16).padStart(2, '0') + (j % 8 === 7 ? '  ' : ' '); const c = raw[j]; a += c >= 32 && c < 127 ? String.fromCharCode(c) : '.'; } hex += i.toString(16).padStart(4, '0') + '  ' + h.padEnd(50) + ' ' + a + '\n'; }
     if (raw.length > n) hex += '… ' + (raw.length - n) + ' more bytes';
+    const note = state.comments.get(p.n) || '';
     const d = document.createElement('tr'); d.className = 'detail';
-    d.innerHTML = `<td colspan="7"><div class="kv">${kv.map(x => `<div><span>${esc(x[0])}</span> ${esc(x[1])}</div>`).join('')}</div><pre>${esc(hex)}</pre></td>`;
+    d.innerHTML = `<td colspan="7"><div class="kv">${kv.map(x => `<div><span>${esc(x[0])}</span> ${esc(x[1])}</div>`).join('')}</div><pre>${esc(hex)}</pre><div class="pktcmt"><label for="cmt-${p.n}">Analyst note</label><textarea id="cmt-${p.n}" data-cmt="${p.n}" rows="2" placeholder="Add a note for packet #${p.n} — saved with the case package…">${esc(note)}</textarea></div></td>`;
     tr.after(d);
   }
+  $('pktTable').addEventListener('input', e => {
+    const ta = e.target.closest('textarea[data-cmt]'); if (!ta) return;
+    const n = +ta.dataset.cmt, v = ta.value.trim();
+    if (v) state.comments.set(n, v); else state.comments.delete(n);
+    const row = $('pktTable').querySelector(`tr[data-n="${n}"] td.num`); if (row) { const old = row.querySelector('.pktnote'); if (v && !old) row.insertAdjacentHTML('beforeend', ` <span class="pktnote" title="${esc(v)}">💬</span>`); else if (v && old) old.title = v; else if (!v && old) old.remove(); }
+    $('nCmt') && ($('nCmt').textContent = state.comments.size ? fmtN(state.comments.size) : '');
+  });
 
   // ---------------- export
   function copy(text, label) {
@@ -3822,8 +3870,15 @@ const FluxHunt = (function () {
     $('setSens').value = settings.sensitivity || 'normal'; $('lockPass').value = '';
     $('iocWatch').value = settings.iocText || ''; $('allowList').value = settings.allowText || ''; $('cbPalette').checked = !!settings.cbPalette; $('decodeAs').value = settings.decodeAsText || ''; $('setTheme').value = settings.theme || 'system'; $('setDensity').value = settings.density || 'comfortable';
     $('catToggles').innerHTML = ALL_CATS.map(c => `<label><input type="checkbox" data-cat="${esc(c)}" ${settings.disabled.includes(c) ? '' : 'checked'}>${esc(c)}</label>`).join('');
+    renderColorRules();
     $('settingsModal').hidden = false;
   }
+  function renderColorRules() {
+    const list = $('colorRulesList'); const rules = settings.colorRules || [];
+    list.innerHTML = rules.length ? rules.map((r, i) => `<div class="crule"><span class="sw" style="background:${RULE_COLORS[r.color] || r.color}"></span><span class="rf" title="${esc(r.filter)}">${esc(r.filter)}</span><button type="button" data-cr="${i}" title="Remove">✕</button></div>`).join('') : '<p class="hint" style="flex-basis:auto">No colouring rules yet.</p>';
+  }
+  $('crAdd').addEventListener('click', () => { const f = $('crFilter').value.trim(); if (!f) { toast('Enter a filter expression'); return; } if (!parseFilter(f).groups.length) { toast('That filter is empty or invalid'); return; } (settings.colorRules || (settings.colorRules = [])).push({ filter: f, color: $('crColor').value }); saveSettings(); $('crFilter').value = ''; renderColorRules(); if (!$('view-packets').hidden) applyFilter(); });
+  $('colorRulesList').addEventListener('click', e => { const b = e.target.closest('button[data-cr]'); if (!b) return; settings.colorRules.splice(+b.dataset.cr, 1); saveSettings(); renderColorRules(); if (!$('view-packets').hidden) applyFilter(); });
   function closeSettings() { $('settingsModal').hidden = true; }
   $('settingsBtn').addEventListener('click', openSettings);
   $('setClose').addEventListener('click', closeSettings);
@@ -3889,10 +3944,11 @@ const FluxHunt = (function () {
         { name: prefix + 'zeek-logs.txt', data: A.exportIoCs(state.result, 'zeek', { name: state.name }) },
         { name: prefix + 'attack-navigator.json', data: A.exportIoCs(state.result, 'navigator', { name: state.name }) },
         { name: prefix + 'findings.json', data: JSON.stringify({ capture: state.name, generated: new Date().toISOString(), analyst: settings.analyst, summary: state.result.summary, findings: state.result.findings.map(f => ({ id: f.id, severity: f.severity, category: f.category, attack: f.attack, title: f.title, summary: f.summary, hosts: f.hosts, firstSeen: f.firstTs })) }, null, 2) },
+        ...(state.comments && state.comments.size ? [{ name: prefix + 'packet-notes.csv', data: 'packet_no,time_rel_s,src,dst,proto,note\n' + [...state.comments.entries()].sort((a, b) => a[0] - b[0]).map(([n, note]) => { const p = state.pkts[n - 1]; const rel = p ? (p.ts - state.result.summary.start).toFixed(4) : ''; return [n, rel, p ? p.src : '', p ? p.dst : '', p ? p.proto : '', note].map(v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"').join(','); }).join('\n') }] : []),
       ];
       if (state.capture) files.push({ name: prefix + 'capture-anonymized.pcap', data: A.exportPcap(state.capture, null, { anonymize: true }) });
       if (!$('view-graph').hidden && graphState) { const png = await new Promise(res => $('graph').toBlob(b => res(b))); if (png) files.push({ name: prefix + 'attack-map.png', data: new Uint8Array(await png.arrayBuffer()) }); }
-      files.push({ name: prefix + 'README.txt', data: 'FluxHunt case package\nGenerated ' + new Date().toISOString() + '\nAnalyst: ' + (settings.analyst.name || '—') + '\nCase: ' + (settings.analyst.case || '—') + '\n\nContents:\n- report.html / report.md : incident-response report\n- indicators.csv / .stix.json : IOCs\n- zeek-logs.txt, attack-navigator.json, findings.json\n- capture-anonymized.pcap : sanitised capture\n- attack-map.png : topology (if generated)\n' });
+      files.push({ name: prefix + 'README.txt', data: 'FluxHunt case package\nGenerated ' + new Date().toISOString() + '\nAnalyst: ' + (settings.analyst.name || '—') + '\nCase: ' + (settings.analyst.case || '—') + '\n\nContents:\n- report.html / report.md : incident-response report\n- indicators.csv / .stix.json : IOCs\n- zeek-logs.txt, attack-navigator.json, findings.json\n- packet-notes.csv : analyst packet comments (if any)\n- capture-anonymized.pcap : sanitised capture\n- attack-map.png : topology (if generated)\n' });
       const zip = A.makeZip(files);
       downloadBytes(zip, (settings.analyst && settings.analyst.case ? settings.analyst.case + '-' : '') + 'fluxhunt-case-package.zip', 'application/zip');
       status('Case package ready (' + files.length + ' files).');

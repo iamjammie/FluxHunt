@@ -10,6 +10,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 ## Unreleased
 
 ### Added
+- **Richer packet filters.** The packet-filter grammar gained `contains:`, `matches:`/`regex:`
+  (regular expressions), port ranges (`port:1-1024`), and boolean `||` / `or` (OR across groups,
+  with space / `&&` as AND and `!` as NOT).
+- **Custom colouring rules.** Define filter-expression → colour rules in Settings; matching packets
+  are highlighted in the Packets tab (first match wins).
+- **Packet comments.** Click a packet to add an analyst note; a 💬 marker shows on commented
+  packets and the notes are exported as `packet-notes.csv` in the case package.
 - **Expert tab (IR / CISO briefing).** A dedicated tab that answers the questions an incident
   responder or CISO asks first: an overall risk verdict (Critical/High/Elevated/Low/Clean) and
   colour-coded answer cards — confirmed incident, affected internal hosts, external infrastructure,
