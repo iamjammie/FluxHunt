@@ -24,9 +24,10 @@ server, no internet connection. That makes it safe for sensitive evidence and us
 environments.
 
 > **Part of the Hunt suite.** FluxHunt hunts on the wire; its companion
-> **[HostHunt](https://github.com/iamjammie/HostHunt)** hunts on the box (host & endpoint artefacts).
-> Both are offline and ATT&CK-mapped — see the **[suite overview](https://iamjammie.github.io/FluxHunt/suite.html)**
-> for how they work together.
+> **[HostHunt](https://github.com/iamjammie/HostHunt)** hunts on the box (host & endpoint artefacts), and
+> **[AirHunt](https://github.com/iamjammie/AirHunt)** carries the findings out of an air-gapped
+> environment by screen and camera. All are offline and dependency-free — see the
+> **[suite overview](https://iamjammie.github.io/FluxHunt/suite.html)** for how they work together.
 
 ## What it does
 
