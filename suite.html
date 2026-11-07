@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>iamjammie — threat-hunting tools, frameworks & knowledge</title>
-<meta name="description" content="Open-source threat-hunting and incident-response work by iamjammie: the Hunt suite (Hunt-Sage knowledge hub, FluxHunt network analysis, HostHunt host triage), the SPECTRA space-cyber framework, Photonwire offline air-gap file transfer, and curated learning labs. Offline, ATT&CK-mapped, defensive.">
+<meta name="description" content="Open-source threat-hunting and incident-response work by iamjammie: the Hunt suite (Hunt-Sage knowledge hub, FluxHunt network analysis, HostHunt host triage), the SPECTRA space-cyber framework, Photonwire offline air-gap file transfer, the TTP NEXUS frameworks intelligence portal, and curated learning labs. Offline, ATT&CK-mapped, defensive.">
 <style>
   :root{
     --bg:#0e1418; --surface:#151c22; --surface-2:#1a232a; --line:#2b3741;
@@ -14,6 +14,7 @@
     --sage:#a78bfa; --sage-fg:#1e1340; --sage-soft:#241b45;
     --spectra:#6fa8ee; --spectra-fg:#07182e; --spectra-soft:#152a42;
     --photon:#f2b8ff; --photon-fg:#2a0a33; --photon-soft:#36203c;
+    --nexus:#22d3ee; --nexus-fg:#04212a; --nexus-soft:#0d3340;
     color-scheme:dark;
   }
   @media (prefers-color-scheme: light){
@@ -25,6 +26,7 @@
       --sage:#6d28d9; --sage-fg:#fff; --sage-soft:#ece4fb;
       --spectra:#2563eb; --spectra-fg:#fff; --spectra-soft:#dde8fb;
       --photon:#9333ea; --photon-fg:#fff; --photon-soft:#f0e3fb;
+      --nexus:#0e7490; --nexus-fg:#fff; --nexus-soft:#d6eef4;
       color-scheme:light;
     }
   }
@@ -78,6 +80,7 @@
   .card.sage{border-top-color:var(--sage)} .card.sage .dot{background:var(--sage)} .card.sage .links a.pri{background:var(--sage); color:var(--sage-fg); border-color:var(--sage)}
   .card.photon{border-top-color:var(--photon)} .card.photon .dot{background:var(--photon)} .card.photon .links a.pri{background:var(--photon); color:var(--photon-fg); border-color:var(--photon)}
   .card.spectra{border-top-color:var(--spectra)} .card.spectra .dot{background:var(--spectra)} .card.spectra .links a.pri{background:var(--spectra); color:var(--spectra-fg); border-color:var(--spectra)}
+  .card.nexus{border-top-color:var(--nexus)} .card.nexus .dot{background:var(--nexus)} .card.nexus .links a.pri{background:var(--nexus); color:var(--nexus-fg); border-color:var(--nexus)}
 
   .combo{background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--line); border-radius:18px; padding:26px 24px}
   .steps{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:16px; margin-top:18px}
@@ -219,7 +222,7 @@
   <div class="wrap">
     <p class="eyebrow">Frameworks &amp; tools</p>
     <h2>Beyond the hunt</h2>
-    <p class="sub">Original research in an adjacent domain, and a standalone tool for the air gap.</p>
+    <p class="sub">Original research in an adjacent domain, a unified frameworks intelligence portal, and a standalone tool for the air gap.</p>
     <div class="grid3">
       <div class="card spectra">
         <span class="badge"><span class="dot"></span>Framework · space cyber</span>
@@ -250,6 +253,22 @@
         <div class="links">
           <a class="pri" href="https://github.com/iamjammie/Photonwire">Source</a>
           <a href="https://github.com/iamjammie/Photonwire#quick-start">Quick start</a>
+        </div>
+      </div>
+      <div class="card nexus">
+        <span class="badge"><span class="dot"></span>Portal · frameworks · learning</span>
+        <h3>TTP NEXUS</h3>
+        <p class="tag">Connecting tactics. Decoding threats. Enabling defence.</p>
+        <p>A single offline-first HTML portal unifying MITRE ATT&amp;CK, D3FEND, CAPEC, CWE/CVE, the Cyber Kill Chain
+           and pentest methodologies — with cross-framework correlation, a knowledge graph, an ATT&amp;CK-style matrix,
+           learning paths and study mode.</p>
+        <ul>
+          <li><b>Confidence-tagged mappings</b> — official vs curated, never invented</li>
+          <li>Offline by default; Online mode loads the full official ATT&amp;CK catalog</li>
+          <li>Exports JSON / CSV / Markdown / HTML / STIX 2.1</li>
+        </ul>
+        <div class="links">
+          <a class="pri" href="https://github.com/iamjammie/TTP-Nexus">Source</a>
         </div>
       </div>
       <div class="card" style="border-top-color:var(--muted)">
@@ -310,6 +329,7 @@
       <a href="https://github.com/iamjammie/HostHunt">HostHunt</a>
       <a href="https://github.com/iamjammie/SPECTRA---Space-Cyber-Framework">SPECTRA</a>
       <a href="https://github.com/iamjammie/Photonwire">Photonwire</a>
+      <a href="https://github.com/iamjammie/TTP-Nexus">TTP NEXUS</a>
       <a href="https://github.com/iamjammie">Profile</a>
     </nav>
   </div>
