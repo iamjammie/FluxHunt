@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>iamjammie — threat-hunting tools, frameworks & knowledge</title>
-<meta name="description" content="Open-source threat-hunting and incident-response work by iamjammie: the Hunt suite (Hunt-Sage knowledge hub, FluxHunt network analysis, HostHunt host triage), the SPECTRA space-cyber framework, Photonwire offline air-gap file transfer, the TTP NEXUS frameworks intelligence portal, and curated learning labs. Offline, ATT&CK-mapped, defensive.">
+<meta name="description" content="Open-source threat-hunting and incident-response work by iamjammie: the Hunt suite (Hunt-Sage knowledge hub, FluxHunt network analysis, HostHunt host triage, ADHuntX Active Directory assessment), the SPECTRA space-cyber framework, Photonwire offline air-gap file transfer, the TTP NEXUS frameworks intelligence portal, and curated learning labs. Offline, ATT&CK-mapped, defensive.">
 <style>
   :root{
     --bg:#0e1418; --surface:#151c22; --surface-2:#1a232a; --line:#2b3741;
@@ -15,6 +15,7 @@
     --spectra:#6fa8ee; --spectra-fg:#07182e; --spectra-soft:#152a42;
     --photon:#f2b8ff; --photon-fg:#2a0a33; --photon-soft:#36203c;
     --nexus:#22d3ee; --nexus-fg:#04212a; --nexus-soft:#0d3340;
+    --adhunt:#fb7185; --adhunt-fg:#2a0510; --adhunt-soft:#3a1420;
     color-scheme:dark;
   }
   @media (prefers-color-scheme: light){
@@ -27,6 +28,7 @@
       --spectra:#2563eb; --spectra-fg:#fff; --spectra-soft:#dde8fb;
       --photon:#9333ea; --photon-fg:#fff; --photon-soft:#f0e3fb;
       --nexus:#0e7490; --nexus-fg:#fff; --nexus-soft:#d6eef4;
+      --adhunt:#be123c; --adhunt-fg:#fff; --adhunt-soft:#fbe0e6;
       color-scheme:light;
     }
   }
@@ -81,6 +83,7 @@
   .card.photon{border-top-color:var(--photon)} .card.photon .dot{background:var(--photon)} .card.photon .links a.pri{background:var(--photon); color:var(--photon-fg); border-color:var(--photon)}
   .card.spectra{border-top-color:var(--spectra)} .card.spectra .dot{background:var(--spectra)} .card.spectra .links a.pri{background:var(--spectra); color:var(--spectra-fg); border-color:var(--spectra)}
   .card.nexus{border-top-color:var(--nexus)} .card.nexus .dot{background:var(--nexus)} .card.nexus .links a.pri{background:var(--nexus); color:var(--nexus-fg); border-color:var(--nexus)}
+  .card.adhunt{border-top-color:var(--adhunt)} .card.adhunt .dot{background:var(--adhunt)} .card.adhunt .links a.pri{background:var(--adhunt); color:var(--adhunt-fg); border-color:var(--adhunt)}
 
   .combo{background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--line); border-radius:18px; padding:26px 24px}
   .steps{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:16px; margin-top:18px}
@@ -129,7 +132,7 @@
     <h1>Threat hunting — from the <span class="b">wire</span> to the <span class="c">box</span> to the <span class="a">playbook</span>.</h1>
     <p class="lede">Open-source, offline, MITRE&nbsp;ATT&amp;CK-mapped tooling and knowledge for threat hunters and
       incident responders — a network analyser, a host triage tool, a hunting knowledge hub, a
-      space-systems security framework, and an optical file transfer for air-gapped systems. Everything here is defensive, dependency-light, and free to audit.</p>
+      space-systems security framework, an optical file transfer for air-gapped systems, and an Active Directory assessment tool. Everything here is defensive, dependency-light, and free to audit.</p>
     <div class="cta">
       <a class="btn pri" href="#suite">The Hunt suite ↓</a>
       <a class="btn" href="https://github.com/iamjammie">GitHub profile</a>
@@ -140,9 +143,9 @@
 <section id="suite">
   <div class="wrap">
     <p class="eyebrow">The Hunt suite</p>
-    <h2>Learn it, hunt the host, hunt the wire</h2>
-    <p class="sub">Three companion projects that cover a hunt end to end — the knowledge to form a hypothesis,
-      the host-side evidence, and the network-side evidence — all mapped to the same ATT&amp;CK techniques.</p>
+    <h2>Learn it, hunt the host, hunt the wire, hunt the directory</h2>
+    <p class="sub">Four companion projects that cover a hunt end to end — the knowledge to form a hypothesis,
+      and the host-side, network-side and directory-side evidence — all mapped to the same ATT&amp;CK techniques.</p>
     <div class="grid3">
 
       <div class="card sage">
@@ -197,6 +200,24 @@
         </div>
       </div>
 
+      <div class="card adhunt">
+        <span class="badge"><span class="dot"></span>In the directory · Active Directory</span>
+        <h3>ADHuntX</h3>
+        <p class="tag">Hunting threats through directory exposure.</p>
+        <p>A single-file, fully offline web app that imports a read-only snapshot of Active Directory and turns it into
+           evidence-based findings, privilege-escalation attack paths, risk scoring and a shareable report — all in the
+           browser, zero network calls.</p>
+        <ul>
+          <li><b>35 assessment rules</b> + ACL/DACL attack-path analysis, each ATT&amp;CK-mapped</li>
+          <li>PingCastle-style scoring, BloodHound-style graph, read-only PowerShell collector</li>
+          <li>Runs in any browser — no install, air-gap safe</li>
+        </ul>
+        <div class="links">
+          <a class="pri" href="https://github.com/iamjammie/ADHuntX">Source</a>
+          <a href="https://github.com/iamjammie/ADHuntX#quick-start">Quick start</a>
+        </div>
+      </div>
+
     </div>
   </div>
 </section>
@@ -207,12 +228,13 @@
       <p class="eyebrow">Better together</p>
       <h2>One incident, every angle</h2>
       <p class="sub">An incident rarely lives in one place. Form the hypothesis, pull host and network evidence,
-        and line them up on the same ATT&amp;CK technique — two confirmations beat one guess.</p>
+        and line them up on the same ATT&amp;CK technique — more confirmations beat one guess.</p>
       <div class="steps">
         <div class="step"><div class="n">1</div><h4>Hypothesise</h4><p>Pick a Hunt-Sage playbook and its ATT&amp;CK techniques to hunt.</p></div>
         <div class="step"><div class="n">2</div><h4>Hunt the host</h4><p>HostHunt collects the endpoint — persistence, processes, logs.</p></div>
         <div class="step"><div class="n">3</div><h4>Hunt the wire</h4><p>FluxHunt analyses the capture — beaconing, exfil, carved files.</p></div>
-        <div class="step"><div class="n">4</div><h4>Correlate</h4><p>Pivot on shared IOCs; both map to one ATT&amp;CK kill-chain story.</p></div>
+        <div class="step"><div class="n">4</div><h4>Hunt the directory</h4><p>ADHuntX maps AD privilege exposure — attack paths to Domain Admin.</p></div>
+        <div class="step"><div class="n">5</div><h4>Correlate</h4><p>Pivot on shared IOCs and identities; all map to one ATT&amp;CK story.</p></div>
       </div>
     </div>
   </div>
@@ -311,7 +333,7 @@
     <h2>Built the same way</h2>
     <div class="principles">
       <div class="pr"><h4>Offline &amp; air-gap-friendly</h4><p>No uploads, no live calls — evidence stays on the machine it's examined on.</p></div>
-      <div class="pr"><h4>Minimal dependencies</h4><p>FluxHunt is one HTML file; HostHunt is pure Python standard library.</p></div>
+      <div class="pr"><h4>Minimal dependencies</h4><p>FluxHunt and ADHuntX are each one HTML file; HostHunt is pure Python standard library.</p></div>
       <div class="pr"><h4>ATT&amp;CK-mapped</h4><p>Findings and playbooks carry MITRE ATT&amp;CK techniques for triage and reporting.</p></div>
       <div class="pr"><h4>Defensive &amp; MIT-licensed</h4><p>Read-only analysis for responders — open source, free to audit and extend.</p></div>
     </div>
@@ -328,6 +350,7 @@
       <a href="https://github.com/iamjammie/hunt-sage">Hunt-Sage</a>
       <a href="https://github.com/iamjammie/FluxHunt">FluxHunt</a>
       <a href="https://github.com/iamjammie/HostHunt">HostHunt</a>
+      <a href="https://github.com/iamjammie/ADHuntX">ADHuntX</a>
       <a href="https://github.com/iamjammie/SPECTRA---Space-Cyber-Framework">SPECTRA</a>
       <a href="https://github.com/iamjammie/Photonwire">Photonwire</a>
       <a href="https://github.com/iamjammie/TTP-Nexus">TTP NEXUS</a>
