@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>iamjammie — threat-hunting tools, frameworks & knowledge</title>
-<meta name="description" content="Open-source threat-hunting and incident-response work by iamjammie: the Hunt suite (Hunt-Sage knowledge hub, FluxHunt network analysis, HostHunt host triage, ADHuntX Active Directory assessment), the SPECTRA space-cyber framework, Photonwire offline air-gap file transfer, the TTP NEXUS frameworks intelligence portal, and curated learning labs. Offline, ATT&CK-mapped, defensive.">
+<meta name="description" content="Open-source threat-hunting and incident-response work by iamjammie: the Hunt suite (Hunt-Sage knowledge hub, FluxHunt network analysis, HostHunt host triage, HostVigil fleet workload security, ADHuntX Active Directory assessment), Sentinel Matrix detection-coverage analysis, the TTP NEXUS frameworks intelligence portal, the ThreatIntFlux threat-intelligence console, the SPECTRA space-cyber framework, Photonwire offline air-gap file transfer, and curated learning labs. Offline, ATT&CK-mapped, defensive.">
 <style>
   :root{
     --bg:#0e1418; --surface:#151c22; --surface-2:#1a232a; --line:#2b3741;
@@ -17,6 +17,8 @@
     --nexus:#22d3ee; --nexus-fg:#04212a; --nexus-soft:#0d3340;
     --tint:#fbbf24; --tint-fg:#2a1800; --tint-soft:#3a2a08;
     --adhunt:#fb7185; --adhunt-fg:#2a0510; --adhunt-soft:#3a1420;
+    --vigil:#4ade80; --vigil-fg:#052e14; --vigil-soft:#123a22;
+    --matrix:#fb923c; --matrix-fg:#2a1203; --matrix-soft:#3d2210;
     color-scheme:dark;
   }
   @media (prefers-color-scheme: light){
@@ -31,6 +33,8 @@
       --nexus:#0e7490; --nexus-fg:#fff; --nexus-soft:#d6eef4;
       --tint:#b45309; --tint-fg:#fff; --tint-soft:#fdf1dc;
       --adhunt:#be123c; --adhunt-fg:#fff; --adhunt-soft:#fbe0e6;
+      --vigil:#15803d; --vigil-fg:#fff; --vigil-soft:#dcf3e3;
+      --matrix:#c2410c; --matrix-fg:#fff; --matrix-soft:#fde6d6;
       color-scheme:light;
     }
   }
@@ -86,6 +90,8 @@
   .card.spectra{border-top-color:var(--spectra)} .card.spectra .dot{background:var(--spectra)} .card.spectra .links a.pri{background:var(--spectra); color:var(--spectra-fg); border-color:var(--spectra)}
   .card.nexus{border-top-color:var(--nexus)} .card.nexus .dot{background:var(--nexus)} .card.nexus .links a.pri{background:var(--nexus); color:var(--nexus-fg); border-color:var(--nexus)}
   .card.tint{border-top-color:var(--tint)} .card.tint .dot{background:var(--tint)} .card.tint .links a.pri{background:var(--tint); color:var(--tint-fg); border-color:var(--tint)}
+  .card.vigil{border-top-color:var(--vigil)} .card.vigil .dot{background:var(--vigil)} .card.vigil .links a.pri{background:var(--vigil); color:var(--vigil-fg); border-color:var(--vigil)}
+  .card.matrix{border-top-color:var(--matrix)} .card.matrix .dot{background:var(--matrix)} .card.matrix .links a.pri{background:var(--matrix); color:var(--matrix-fg); border-color:var(--matrix)}
   .card.adhunt{border-top-color:var(--adhunt)} .card.adhunt .dot{background:var(--adhunt)} .card.adhunt .links a.pri{background:var(--adhunt); color:var(--adhunt-fg); border-color:var(--adhunt)}
 
   .combo{background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--line); border-radius:18px; padding:26px 24px}
@@ -95,7 +101,9 @@
   .step:nth-child(1) .n{background:var(--sage-soft); color:var(--sage)}
   .step:nth-child(2) .n{background:var(--host-soft); color:var(--host)}
   .step:nth-child(3) .n{background:var(--flux-soft); color:var(--flux)}
-  .step:nth-child(4) .n{background:var(--spectra-soft); color:var(--spectra)}
+  .step:nth-child(4) .n{background:var(--adhunt-soft); color:var(--adhunt)}
+  .step:nth-child(5) .n{background:var(--spectra-soft); color:var(--spectra)}
+  .step:nth-child(6) .n{background:var(--matrix-soft); color:var(--matrix)}
   .step h4{margin:0; font-size:14px} .step p{margin:0; color:var(--muted); font-size:12.5px}
 
   .res{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px}
@@ -134,8 +142,9 @@
     </div>
     <h1>Threat hunting — from the <span class="b">wire</span> to the <span class="c">box</span> to the <span class="a">playbook</span>.</h1>
     <p class="lede">Open-source, offline, MITRE&nbsp;ATT&amp;CK-mapped tooling and knowledge for threat hunters and
-      incident responders — a network analyser, a host triage tool, a hunting knowledge hub, a
-      space-systems security framework, an optical file transfer for air-gapped systems, and an Active Directory assessment tool. Everything here is defensive, dependency-light, and free to audit.</p>
+      incident responders — a hunting knowledge hub, a network analyser, a host triage tool, an air-gapped fleet agent,
+      an Active Directory assessment tool, a detection-coverage workbench, a frameworks portal, a threat-intelligence console,
+      a space-systems security framework and an optical file transfer for air-gapped systems. Everything here is defensive, dependency-light, and free to audit.</p>
     <div class="cta">
       <a class="btn pri" href="#suite">The Hunt suite ↓</a>
       <a class="btn" href="https://github.com/iamjammie">GitHub profile</a>
@@ -146,9 +155,9 @@
 <section id="suite">
   <div class="wrap">
     <p class="eyebrow">The Hunt suite</p>
-    <h2>Learn it, hunt the host, hunt the wire, hunt the directory</h2>
-    <p class="sub">Four companion projects that cover a hunt end to end — the knowledge to form a hypothesis,
-      and the host-side, network-side and directory-side evidence — all mapped to the same ATT&amp;CK techniques.</p>
+    <h2>Learn it, hunt the wire, the box, the fleet and the directory</h2>
+    <p class="sub">Five companion projects that cover a hunt end to end — the knowledge to form a hypothesis,
+      and the network-side, host-side, fleet-wide and directory-side evidence — all mapped to the same ATT&amp;CK techniques.</p>
     <div class="grid3">
 
       <div class="card sage">
@@ -158,8 +167,8 @@
         <p>From "what is threat hunting?" to running hunts and shipping detections — theory and practical,
            copy-paste-ready material in one place.</p>
         <ul>
-          <li><b>14 playbooks</b> with KQL + SPL, triage and escalation</li>
-          <li><b>20 ATT&amp;CK-mapped Sigma rules</b> + coverage map</li>
+          <li><b>25 playbooks</b> and 6 hunt packs with KQL + SPL, triage and escalation</li>
+          <li><b>43 ATT&amp;CK-mapped Sigma rules</b> + coverage map</li>
           <li>Cheat sheets, labs, templates and a blue-team CTF</li>
         </ul>
         <div class="links">
@@ -203,6 +212,24 @@
         </div>
       </div>
 
+      <div class="card vigil">
+        <span class="badge"><span class="dot"></span>Across the fleet · Windows workloads</span>
+        <h3>HostVigil</h3>
+        <p class="tag">Air-gapped, agent-based workload security.</p>
+        <p>A Rust agent on every Windows host streams process, flow, file, registry, logon and configuration
+           telemetry over mTLS to a Linux server that correlates it, scores risk and renders a mission-control HUD.
+           Nothing phones home.</p>
+        <ul>
+          <li><b>Flow map, microsegmentation, FIM</b>, vulnerability and allowlisting views</li>
+          <li>Sigma and YARA detections with an ATT&amp;CK heat map</li>
+          <li>CVE, Sigma and YARA feeds arrive as signed offline bundles</li>
+        </ul>
+        <div class="links">
+          <a class="pri" href="https://github.com/iamjammie/HostVigil">Source</a>
+          <a href="https://github.com/iamjammie/HostVigil#quick-start-lab">Quick start</a>
+        </div>
+      </div>
+
       <div class="card adhunt">
         <span class="badge"><span class="dot"></span>In the directory · Active Directory</span>
         <h3>ADHuntX</h3>
@@ -230,14 +257,15 @@
     <div class="combo">
       <p class="eyebrow">Better together</p>
       <h2>One incident, every angle</h2>
-      <p class="sub">An incident rarely lives in one place. Form the hypothesis, pull host and network evidence,
+      <p class="sub">An incident rarely lives in one place. Form the hypothesis, pull host, network and directory evidence,
         and line them up on the same ATT&amp;CK technique — more confirmations beat one guess.</p>
       <div class="steps">
         <div class="step"><div class="n">1</div><h4>Hypothesise</h4><p>Pick a Hunt-Sage playbook and its ATT&amp;CK techniques to hunt.</p></div>
-        <div class="step"><div class="n">2</div><h4>Hunt the host</h4><p>HostHunt collects the endpoint — persistence, processes, logs.</p></div>
+        <div class="step"><div class="n">2</div><h4>Hunt the host</h4><p>HostHunt triages the endpoint; HostVigil watches the whole fleet.</p></div>
         <div class="step"><div class="n">3</div><h4>Hunt the wire</h4><p>FluxHunt analyses the capture — beaconing, exfil, carved files.</p></div>
         <div class="step"><div class="n">4</div><h4>Hunt the directory</h4><p>ADHuntX maps AD privilege exposure — attack paths to Domain Admin.</p></div>
         <div class="step"><div class="n">5</div><h4>Correlate</h4><p>Pivot on shared IOCs and identities; all map to one ATT&amp;CK story.</p></div>
+        <div class="step"><div class="n">6</div><h4>Close the gap</h4><p>Sentinel Matrix shows which techniques your SIEM rules still miss.</p></div>
       </div>
     </div>
   </div>
@@ -247,8 +275,24 @@
   <div class="wrap">
     <p class="eyebrow">Frameworks &amp; tools</p>
     <h2>Beyond the hunt</h2>
-    <p class="sub">Original research in an adjacent domain, a unified frameworks intelligence portal, and a standalone tool for the air gap.</p>
+    <p class="sub">Detection-coverage analysis, a unified frameworks portal, a threat-intelligence console, original research in an adjacent domain, and a standalone tool for the air gap.</p>
     <div class="grid3">
+      <div class="card matrix">
+        <span class="badge"><span class="dot"></span>Workbench · SIEM detection coverage</span>
+        <h3>Sentinel Matrix</h3>
+        <p class="tag">See the gaps. Engineer the defence. Detect the adversary.</p>
+        <p>An offline-first, single-file workbench that assesses whether your existing SIEM detection rules can catch
+           known adversary techniques, finds the blind spots, and helps engineer, validate and manage new detections.</p>
+        <ul>
+          <li><b>Imports your rules</b> — Sigma, Splunk, QRadar, Elastic and Sentinel formats</li>
+          <li>Weighted ATT&amp;CK coverage, prioritised gap analysis, rule generator</li>
+          <li>Optional read-only local agent for a live SIEM audit</li>
+        </ul>
+        <div class="links">
+          <a class="pri" href="https://github.com/iamjammie/Sentinel-Matrix">Source</a>
+          <a href="https://github.com/iamjammie/Sentinel-Matrix#quick-start">Quick start</a>
+        </div>
+      </div>
       <div class="card spectra">
         <span class="badge"><span class="dot"></span>Framework · space cyber</span>
         <h3>SPECTRA</h3>
@@ -276,8 +320,8 @@
           <li>Documented QRX/1 frame protocol</li>
         </ul>
         <div class="links">
-          <a class="pri" href="https://github.com/iamjammie/Photonwire">Source</a>
-          <a href="https://github.com/iamjammie/Photonwire#quick-start">Quick start</a>
+          <a class="pri" href="https://github.com/iamjammie/PhotonWire">Source</a>
+          <a href="https://github.com/iamjammie/PhotonWire#quick-start">Quick start</a>
         </div>
       </div>
       <div class="card nexus">
@@ -352,9 +396,9 @@
     <h2>Built the same way</h2>
     <div class="principles">
       <div class="pr"><h4>Offline &amp; air-gap-friendly</h4><p>No uploads, no live calls — evidence stays on the machine it's examined on.</p></div>
-      <div class="pr"><h4>Minimal dependencies</h4><p>FluxHunt and ADHuntX are each one HTML file; HostHunt is pure Python standard library.</p></div>
+      <div class="pr"><h4>Minimal dependencies</h4><p>FluxHunt, ADHuntX, Sentinel Matrix and TTP NEXUS are each one HTML file; HostHunt is pure Python standard library.</p></div>
       <div class="pr"><h4>ATT&amp;CK-mapped</h4><p>Findings and playbooks carry MITRE ATT&amp;CK techniques for triage and reporting.</p></div>
-      <div class="pr"><h4>Defensive &amp; MIT-licensed</h4><p>Read-only analysis for responders — open source, free to audit and extend.</p></div>
+      <div class="pr"><h4>Defensive &amp; open source</h4><p>Read-only analysis for responders — open source, free to audit and extend.</p></div>
     </div>
     <p class="note"><b>Use responsibly.</b> The tools are defensive and heuristic: findings are demonstrated on
       synthetic data and can flag legitimate software. Validate against known-good baselines, and run them only on
@@ -364,14 +408,16 @@
 
 <footer>
   <div class="wrap foot-row">
-    <div class="foot-brand"><img src="assets/jammie-logo-sm.png" width="40" height="40" alt="JAMMIE"><div><strong>iamjammie</strong> — threat-hunting tools, frameworks &amp; knowledge. MIT licensed.<br>Intelligence. Hunting. Resilience.</div></div>
+    <div class="foot-brand"><img src="assets/jammie-logo-sm.png" width="40" height="40" alt="JAMMIE"><div><strong>iamjammie</strong> — threat-hunting tools, frameworks &amp; knowledge. Open source — see each repository for its licence.<br>Intelligence. Hunting. Resilience.</div></div>
     <nav class="foot-links">
       <a href="https://github.com/iamjammie/hunt-sage">Hunt-Sage</a>
       <a href="https://github.com/iamjammie/FluxHunt">FluxHunt</a>
       <a href="https://github.com/iamjammie/HostHunt">HostHunt</a>
+      <a href="https://github.com/iamjammie/HostVigil">HostVigil</a>
       <a href="https://github.com/iamjammie/ADHuntX">ADHuntX</a>
+      <a href="https://github.com/iamjammie/Sentinel-Matrix">Sentinel Matrix</a>
       <a href="https://github.com/iamjammie/SPECTRA---Space-Cyber-Framework">SPECTRA</a>
-      <a href="https://github.com/iamjammie/Photonwire">Photonwire</a>
+      <a href="https://github.com/iamjammie/PhotonWire">Photonwire</a>
       <a href="https://github.com/iamjammie/TTP-Nexus">TTP NEXUS</a>
       <a href="https://github.com/iamjammie/ThreatIntFlux">ThreatIntFlux</a>
       <a href="https://github.com/iamjammie">Profile</a>
