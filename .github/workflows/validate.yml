@@ -1,0 +1,25 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Analyzer assertions, build is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Analyzer assertions on the demo capture
+        run: node test/assert_demo.js
+      - name: Standalone build is up to date and offline-safe
+        run: |
+          node build.mjs
+          git diff --exit-code -- FluxHunt.html || (echo "FluxHunt.html is stale: run node build.mjs and commit" && exit 1)
+          ! grep -E 'https?://[^"'"'"' )]+\.(css|js)' FluxHunt.html | grep -v 'www.w3.org' || (echo "external resource in FluxHunt.html" && exit 1)
