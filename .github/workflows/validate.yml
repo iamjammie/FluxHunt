@@ -1,0 +1,38 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Engine, build output, self-contained
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Syntax-check JavaScript
+        run: |
+          node --check analyzer.js
+          node --check build.mjs
+          node --check test/run_demo.js
+
+      - name: Engine smoke test (parse + analyze a known capture)
+        run: node test/run_demo.js test/demo.pcap
+
+      - name: Built single-file app is up to date
+        run: |
+          node build.mjs
+          git diff --exit-code -- FluxHunt.html \
+            || (echo "FluxHunt.html is stale: run 'node build.mjs' and commit the result" && exit 1)
+
+      - name: Portable app is self-contained (no network requests)
+        run: |
+          ! grep -nE 'src="https?://|href="https?://[^"]+\.(css|js)"|@import +url\(https?://|fonts\.googleapis' FluxHunt.html \
+            || (echo "external resource reference found in FluxHunt.html" && exit 1)
