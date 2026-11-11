@@ -15,6 +15,7 @@
     --spectra:#6fa8ee; --spectra-fg:#07182e; --spectra-soft:#152a42;
     --photon:#f2b8ff; --photon-fg:#2a0a33; --photon-soft:#36203c;
     --nexus:#22d3ee; --nexus-fg:#04212a; --nexus-soft:#0d3340;
+    --tint:#fbbf24; --tint-fg:#2a1800; --tint-soft:#3a2a08;
     --adhunt:#fb7185; --adhunt-fg:#2a0510; --adhunt-soft:#3a1420;
     color-scheme:dark;
   }
@@ -28,6 +29,7 @@
       --spectra:#2563eb; --spectra-fg:#fff; --spectra-soft:#dde8fb;
       --photon:#9333ea; --photon-fg:#fff; --photon-soft:#f0e3fb;
       --nexus:#0e7490; --nexus-fg:#fff; --nexus-soft:#d6eef4;
+      --tint:#b45309; --tint-fg:#fff; --tint-soft:#fdf1dc;
       --adhunt:#be123c; --adhunt-fg:#fff; --adhunt-soft:#fbe0e6;
       color-scheme:light;
     }
@@ -83,6 +85,7 @@
   .card.photon{border-top-color:var(--photon)} .card.photon .dot{background:var(--photon)} .card.photon .links a.pri{background:var(--photon); color:var(--photon-fg); border-color:var(--photon)}
   .card.spectra{border-top-color:var(--spectra)} .card.spectra .dot{background:var(--spectra)} .card.spectra .links a.pri{background:var(--spectra); color:var(--spectra-fg); border-color:var(--spectra)}
   .card.nexus{border-top-color:var(--nexus)} .card.nexus .dot{background:var(--nexus)} .card.nexus .links a.pri{background:var(--nexus); color:var(--nexus-fg); border-color:var(--nexus)}
+  .card.tint{border-top-color:var(--tint)} .card.tint .dot{background:var(--tint)} .card.tint .links a.pri{background:var(--tint); color:var(--tint-fg); border-color:var(--tint)}
   .card.adhunt{border-top-color:var(--adhunt)} .card.adhunt .dot{background:var(--adhunt)} .card.adhunt .links a.pri{background:var(--adhunt); color:var(--adhunt-fg); border-color:var(--adhunt)}
 
   .combo{background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--line); border-radius:18px; padding:26px 24px}
@@ -294,6 +297,22 @@
           <a href="https://github.com/iamjammie/TTP-Nexus">Source</a>
         </div>
       </div>
+      <div class="card tint">
+        <span class="badge"><span class="dot"></span>Console · collector · validator</span>
+        <h3>ThreatIntFlux</h3>
+        <p class="tag">The Edge Before Engagement.</p>
+        <p>An offline-first threat-intelligence console with a public-feed collector and a schema validator. Browse
+           the intel feed, search with field filters, correlate on a MITRE ATT&amp;CK matrix, and print an executive briefing.</p>
+        <ul>
+          <li><b>Trust tiers on every item</b> — verified, trusted, unverified, untrusted</li>
+          <li>The built-in dataset is synthetic and labelled SAMPLE; live data comes from the collector</li>
+          <li>Failed sources are reported as errors, never filled with invented items</li>
+        </ul>
+        <div class="links">
+          <a class="pri" href="https://github.com/iamjammie/ThreatIntFlux">Source</a>
+          <a href="https://github.com/iamjammie/ThreatIntFlux#validation">Validation</a>
+        </div>
+      </div>
       <div class="card" style="border-top-color:var(--muted)">
         <span class="badge"><span class="dot" style="background:var(--muted)"></span>Profile</span>
         <h3>About &amp; contact</h3>
@@ -354,6 +373,7 @@
       <a href="https://github.com/iamjammie/SPECTRA---Space-Cyber-Framework">SPECTRA</a>
       <a href="https://github.com/iamjammie/Photonwire">Photonwire</a>
       <a href="https://github.com/iamjammie/TTP-Nexus">TTP NEXUS</a>
+      <a href="https://github.com/iamjammie/ThreatIntFlux">ThreatIntFlux</a>
       <a href="https://github.com/iamjammie">Profile</a>
     </nav>
   </div>
